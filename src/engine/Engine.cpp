@@ -296,6 +296,7 @@ bool Engine::solve( double timeoutInSeconds )
                 performBoundTighteningAfterCaseSplit();
                 printf("*****************\n");
                 _dependencyManager.printTestMessage();
+                _dependencyManager.testPassBoundManager( &_boundManager );
                 printf("*****************\n");
                 // call dependency analysis
                 informLPSolverOfBounds();

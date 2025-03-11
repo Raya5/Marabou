@@ -15,7 +15,7 @@
 #ifndef __DependencyManager_h__
 #define __DependencyManager_h__
 
-// #include "IBoundManager.h"
+#include "IBoundManager.h"
 
 #include <memory>
 #include <unordered_map>
@@ -64,6 +64,9 @@ public:
     */
     void printTestMessage() const {
         std::cout << "DependencyManager is working correctly!" << _test_var << std::endl;
+    }
+    void testPassBoundManager( IBoundManager *boundManager ) const {
+        std::cout << "BoundManager passed! n=" << boundManager->getNumberOfVariables() << std::endl;
     }
 
 private:
