@@ -32,6 +32,7 @@
 #include "TimeUtils.h"
 #include "VariableOutOfBoundDuringOptimizationException.h"
 #include "Vector.h"
+#include "DependencyManager.h"
 
 #include <random>
 
@@ -59,6 +60,7 @@ Engine::Engine()
     , _symbolicBoundTighteningType( Options::get()->getSymbolicBoundTighteningType() )
     , _solveWithMILP( Options::get()->getBool( Options::SOLVE_WITH_MILP ) )
     , _lpSolverType( Options::get()->getLPSolverType() )
+    , _dependencyManager( 31 )
     , _gurobi( nullptr )
     , _milpEncoder( nullptr )
     , _soiManager( nullptr )
@@ -292,6 +294,10 @@ bool Engine::solve( double timeoutInSeconds )
             if ( splitJustPerformed )
             {
                 performBoundTighteningAfterCaseSplit();
+                printf("*****************\n");
+                _dependencyManager.printTestMessage();
+                printf("*****************\n");
+                // call dependency analysis
                 informLPSolverOfBounds();
                 splitJustPerformed = false;
             }
