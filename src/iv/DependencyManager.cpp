@@ -14,18 +14,24 @@
 
 #include "DependencyManager.h"
 
-// DependencyManager::DependencyManager( )//( IBoundManager &boundManager )
-//     : //_boundManager( boundManager )
+
+
+DependencyManager::DependencyManager( const IBoundManager &boundManager )
+    : _boundManager( boundManager )
+    , _dependencyMaxSize(33)
 //     // , _lowerBounds( _boundManager.getLowerBounds() )
 //     // , _upperBounds( _boundManager.getUpperBounds() )
-// {
-// }
-// DependencyManager::~DependencyManager()
-// {
-// }
-
-DependencyManager::DependencyManager( int m )
-: _test_var( m )
 {
-    _test_var = 54;
+}
+DependencyManager::~DependencyManager()
+{
+}
+
+void DependencyManager::logCurrentBounds() const {
+    printf("==== Current Bounds After Split ====\n");
+    for (unsigned i = 0; i < 5; ++i) { //_boundManager.getNumberOfVariables()
+        double lb = _boundManager.getLowerBound(i);
+        double ub = _boundManager.getUpperBound(i);
+        printf("Neuron %u: [%.6f, %.6f]\n", i, lb, ub);  // %.6f for precision
+    }
 }

@@ -60,7 +60,7 @@ Engine::Engine()
     , _symbolicBoundTighteningType( Options::get()->getSymbolicBoundTighteningType() )
     , _solveWithMILP( Options::get()->getBool( Options::SOLVE_WITH_MILP ) )
     , _lpSolverType( Options::get()->getLPSolverType() )
-    , _dependencyManager( 31 )
+    , _dependencyManager( _boundManager )
     , _gurobi( nullptr )
     , _milpEncoder( nullptr )
     , _soiManager( nullptr )
@@ -2116,6 +2116,8 @@ void Engine::applySplit( const PiecewiseLinearCaseSplit &split )
 
     if ( _produceUNSATProofs && _UNSATCertificateCurrentPointer )
         ( **_UNSATCertificateCurrentPointer ).setVisited();
+
+    _dependencyManager.logCurrentBounds();
 
     DEBUG( _tableau->verifyInvariants() );
     ENGINE_LOG( "Done with split\n" );

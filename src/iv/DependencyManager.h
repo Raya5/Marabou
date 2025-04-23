@@ -19,7 +19,7 @@
 
 #include <memory>
 #include <unordered_map>
-#include <string>
+// #include <string>
 #include <iostream> // For printing
 
 /*
@@ -28,42 +28,18 @@
 class DependencyManager
 {
 public:
-    DependencyManager( int m );
-    // DependencyManager( IBoundManager &boundManager );
-    // ~DependencyManager();
+    // DependencyManager( int m );
+    DependencyManager( const IBoundManager &boundManager );
+    ~DependencyManager();
 
-    // /*
-    //   Get BoundManager reference
-    //  */
-    // IBoundManager &getBoundManager() const
-    // {
-    //     return _boundManager;
-    // }
+    void logCurrentBounds() const;
 
-    // /*
-    //   Registers a dependency by name.
-    // */
-    // template <typename T>
-    // void registerDependency(const std::string& name, std::shared_ptr<T> dependency) {
-    //     dependencies[name] = dependency;
-    // }
-
-    // /*
-    //   Retrieves a dependency by name.
-    // */
-    // template <typename T>
-    // std::shared_ptr<T> getDependency(const std::string& name) {
-    //     if (dependencies.find(name) != dependencies.end()) {
-    //         return std::static_pointer_cast<T>(dependencies[name]);
-    //     }
-    //     return nullptr;
-    // }
 
     /*
       A simple function that prints a test message.
     */
     void printTestMessage() const {
-        std::cout << "DependencyManager is working correctly!" << _test_var << std::endl;
+        std::cout << "DependencyManager is working correctly!" << _dependencyMaxSize << std::endl;
     }
     void testPassBoundManager( IBoundManager *boundManager ) const {
         std::cout << "BoundManager passed! n=" << boundManager->getNumberOfVariables() << std::endl;
@@ -71,17 +47,18 @@ public:
 
 private:
     std::unordered_map<std::string, std::shared_ptr<void>> dependencies;
+
     /*
        BoundManager object stores bounds of all variables.
      */
-    // IBoundManager &_boundManager;
+     const IBoundManager &_boundManager;
 
     // /*
     //    Direct pointers to _boundManager arrays to avoid multiple dereferencing.
     //  */
     // const double *_lowerBounds;
     // const double *_upperBounds;
-    int _test_var;
+    unsigned _dependencyMaxSize;
 
 };
 
