@@ -16,11 +16,10 @@
 
 
 
-DependencyManager::DependencyManager( const IBoundManager &boundManager )
+DependencyManager::DependencyManager( const IBoundManager &boundManager)
     : _boundManager( boundManager )
-    , _dependencyMaxSize(33)
-//     // , _lowerBounds( _boundManager.getLowerBounds() )
-//     // , _upperBounds( _boundManager.getUpperBounds() )
+    , _networkLevelReasoner( NULL )
+    , _dependencyMaxSize(36)
 {
 }
 DependencyManager::~DependencyManager()
@@ -28,10 +27,22 @@ DependencyManager::~DependencyManager()
 }
 
 void DependencyManager::logCurrentBounds() const {
-    printf("==== Current Bounds After Split ====\n");
-    for (unsigned i = 0; i < 5; ++i) { //_boundManager.getNumberOfVariables()
-        double lb = _boundManager.getLowerBound(i);
-        double ub = _boundManager.getUpperBound(i);
-        printf("Neuron %u: [%.6f, %.6f]\n", i, lb, ub);  // %.6f for precision
+
+    if (!_networkLevelReasoner) return;
+    
+    printf("==== Layer-wise Bounds ====\n");
+    for (unsigned layer = 0; layer < _networkLevelReasoner->getNumberOfLayers(); ++layer) {
+        printf("-- Layer %u --\n", layer);
+        int stop_count = 3;
+        // for (unsigned neuron : _networkLevelReasoner->getNeuronsInLayer(layer)) {
+        //     double lb = _boundManager.getLowerBound(neuron);
+        //     double ub = _boundManager.getUpperBound(neuron);
+        //     printf("Neuron %u: [%.6f, %.6f]\n", neuron, lb, ub);
+        //     stop_count--;
+
+        //     if ( stop_count == 0)
+        //         break;
+        // }
     }
 }
+

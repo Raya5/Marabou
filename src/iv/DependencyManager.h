@@ -16,6 +16,7 @@
 #define __DependencyManager_h__
 
 #include "IBoundManager.h"
+#include "NetworkLevelReasoner.h"
 
 #include <memory>
 #include <unordered_map>
@@ -29,10 +30,15 @@ class DependencyManager
 {
 public:
     // DependencyManager( int m );
-    DependencyManager( const IBoundManager &boundManager );
+    DependencyManager( const IBoundManager &boundManager);
     ~DependencyManager();
 
     void logCurrentBounds() const;
+    void registerNetworkLevelReasoner(NLR::NetworkLevelReasoner *nlr)
+    {
+        _networkLevelReasoner = nlr;
+    }
+
 
 
     /*
@@ -53,11 +59,13 @@ private:
      */
      const IBoundManager &_boundManager;
 
-    // /*
-    //    Direct pointers to _boundManager arrays to avoid multiple dereferencing.
-    //  */
-    // const double *_lowerBounds;
-    // const double *_upperBounds;
+    /*
+      An object that knows the topology of the network being checked,
+      and can be used for various operations such as network
+      evaluation of topology-based bound tightening.
+     */
+    NLR::NetworkLevelReasoner *_networkLevelReasoner;
+
     unsigned _dependencyMaxSize;
 
 };

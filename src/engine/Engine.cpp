@@ -1408,6 +1408,7 @@ void Engine::initializeNetworkLevelReasoning()
             _networkLevelReasoner->dumpTopology( false );
             std::cout << std::endl;
         }
+        _dependencyManager.registerNetworkLevelReasoner(_networkLevelReasoner);
     }
 }
 
