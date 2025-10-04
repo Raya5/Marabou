@@ -49,13 +49,22 @@ class InputQueryBuilder(ABC):
         self.upperBounds = dict()
         self.inputVars = []
         self.outputVars = []
+        # Incrementality variables
+        self.incremental_mode = False
+        self.incremental_points = []
+        self.incremental_epsilon = None
 
     def clearProperty(self):
         """Clear the lower bounds and upper bounds map, and the self.additionEquList
+            and incrementality variables if deactivate incrementality if used.
         """
         self.lowerBounds.clear()
         self.upperBounds.clear()
         self.additionalEquList.clear()
+        if self.incremental_mode: 
+            self.incremental_mode = False
+            self.incremental_points = []
+            self.incremental_epsilon = None
 
     def getNewVariable(self):
         """Function to create a new variable
@@ -79,6 +88,52 @@ class InputQueryBuilder(ABC):
             self.additionalEquList += [x]
         else:
             self.equList += [x]
+
+    def addRobustnessBatch(self, points, epsilon, targetLabel=None, margin=0.0):
+        """
+        Function to add a batch of base input points for incremental robustness verification.
+        Enables incremental mode in the verification engine.
+
+        Args:
+            points (list[list[float]]): Each point is a flattened input vector.
+            epsilon (float): L-infinity radius around each point.
+            targetLabel (int | None): If provided, encodes the shared output-class
+                property "output[targetLabel] >= output[k] + margin" for all k != targetLabel.
+                If None, no output property is added here (caller may add custom properties).
+            margin (float): Non-negative margin for the class separation (default 0.0).
+        """
+        self.incremental_mode = True
+        self.incremental_points = points
+        self.incremental_epsilon = epsilon
+
+        # Optionally encode the shared output-class property once
+        if targetLabel is not None:
+            # Flatten outputs in the same way getInputQuery() does
+            flat_outputs = []
+            for outputVarArray in self.outputVars:
+                for outputVar in outputVarArray.flatten():
+                    flat_outputs.append(int(outputVar))
+
+            assert len(flat_outputs) > 0, "No output variables found when adding class property"
+            assert 0 <= targetLabel < len(flat_outputs), \
+                f"targetLabel {targetLabel} out of range (num outputs = {len(flat_outputs)})"
+            assert margin >= 0.0, "margin must be non-negative"
+
+            y_t = flat_outputs[targetLabel]
+            # For each other class k, enforce: y_t - y_k >= margin  ⇔  (-1)*y_t + (1)*y_k ≤ -margin
+            for k, y_k in enumerate(flat_outputs):
+                if k == targetLabel:
+                    continue
+                self.addInequality(
+                    vars=[y_t, y_k],
+                    coeffs=[-1.0, 1.0],
+                    scalar=-float(margin),
+                    isProperty=True,  # allow clearProperty() to remove these
+                )
+
+        print(f"[DEBUG] addRobustnessBatch called: {len(points)} points, ε={epsilon}, "
+            f"targetLabel={targetLabel}, margin={margin}")  # TODO: remove later
+
 
     def setLowerBound(self, x, v):
         """Function to set lower bound for variable
@@ -347,7 +402,77 @@ class InputQueryBuilder(ABC):
             assert u < self.numVars
             ipq.setUpperBound(u, self.upperBounds[u])
 
+        if self.incremental_mode:
+            print(f"[DEBUG] Building InputQuery in incremental mode with {len(self.incremental_points)} points and ε={self.incremental_epsilon}")
+            # TODO: Pass points and epsilon to ipq once C++ side supports it
+
         return ipq
+
+
+    def getIncrementalInputQueries(self):
+        """
+        Construct a list of per-point InputQuery objects for incremental verification.
+
+        Stage 1:
+        - Requires that a batch was supplied via addRobustnessBatch(points, epsilon).
+        - For each point, builds a fresh InputQuery via getInputQuery(), then
+            sets the input variable bounds to an L-infinity ball around the point:
+                lb_i = p[i] - epsilon
+                ub_i = p[i] + epsilon
+        - Returns: list of InputQuery objects, one per point.
+
+        Notes / TODO:
+        - TODO: clamp (lb_i, ub_i) to any preexisting network-level bounds if desired.
+        - TODO: register a shared DependencyAnalyzer* on each IPQ when C++ side is ready.
+        """
+        # Preconditions
+        if not self.incremental_mode:
+            raise RuntimeError(
+                "getIncrementalInputQueries called but incremental_mode is False. "
+                "Call addRobustnessBatch(points, epsilon) first."
+            )
+
+        points = self.incremental_points
+        epsilon = self.incremental_epsilon
+        if points is None or epsilon is None or len(points) == 0:
+            raise RuntimeError(
+                "Incremental batch is empty or not initialized. "
+                "Ensure addRobustnessBatch(points, epsilon) was called with a non-empty list."
+            )
+
+        # Build the flat ordering of input variable IDs (mirrors getInputQuery()’s flatten)
+        flat_input_vars = []
+        for inputVarArray in self.inputVars:
+            for inputVar in inputVarArray.flatten():
+                flat_input_vars.append(int(inputVar))
+
+        num_inputs = len(flat_input_vars)
+
+        # Validate each point’s length
+        for idx, p in enumerate(points):
+            assert len(p) == num_inputs, \
+                f"Point #{idx} has length {len(p)} but network expects {num_inputs} inputs."
+
+        # Build one IPQ per point
+        ipqs = []
+        if self.incremental_mode:
+            print(f"[DEBUG] getIncrementalInputQueries: building {len(points)} IPQs, ε={epsilon}")
+
+        for pt_idx, p in enumerate(points):
+            ipq = self.getInputQuery()  # includes current constraints, IO markings, etc.
+
+            # Set per-point input bounds
+            for i, var in enumerate(flat_input_vars):
+                lb = float(p[i] - epsilon)
+                ub = float(p[i] + epsilon)
+                ipq.setLowerBound(var, lb)
+                ipq.setUpperBound(var, ub)
+
+            # TODO (future): ipq.registerDependencyAnalyzer(analyzer_ptr)
+            ipqs.append(ipq)
+
+        return ipqs
+
 
     def saveQuery(self, filename=""):
         """Serializes the inputQuery in the given filename

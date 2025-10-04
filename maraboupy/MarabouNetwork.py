@@ -85,6 +85,114 @@ class MarabouNetwork(InputQueryBuilder):
                         print("output {} = {}".format(i, vals[self.outputVars[j].item(i)]))
 
         return [exitCode, vals, stats]
+    
+    def incrementalSolve(self, filename: str = "", verbose: bool = True,
+                        options=None, propertyFilename: str = ""):
+        """
+        Function to solve a batch of robustness queries incrementally.
+
+        This runs the solver once per input point in the previously supplied batch
+        (via `addRobustnessBatch(points, epsilon)`), while reusing shared bounds
+        and dependency information across the batch (incremental mode).
+
+        Args:
+            filename (string):
+                Base path for redirecting output. If non-empty, a per-point suffix
+                is appended: "<filename>.pt{idx}".
+            verbose (bool):
+                If True, prints per-point results after solving.
+            options (:class:`~maraboupy.MarabouCore.Options`):
+                Solver options. If None, a fresh Options() is created.
+                Requirements for incremental mode:
+                - options.incremental must be settable to True (set internally).
+                - options.dnc must be False; if it is True, an error is raised.
+            propertyFilename (string):
+                Reserved for future use. For now, only the empty string "" is
+                supported. If a non-empty string is passed, an error is raised.
+
+        Returns:
+            (tuple):
+                - exitCodes (List[str]): One per point in the batch, each in
+                {"sat","unsat","TIMEOUT","ERROR","UNKNOWN","QUIT_REQUESTED"}.
+                - valsList (List[Dict[int, float]]): For each point, empty dict if
+                UNSAT; otherwise satisfying assignment (var -> value).
+                - statsList (List[:class:`~maraboupy.MarabouCore.Statistics`]):
+                One Statistics object per point.
+
+        Notes:
+            - Expects `getIncrementalInputQueries()` to return per-point IPQs that
+            all share the same (non-owning) DependencyAnalyzer pointer set on C++ side.
+            - The shared output-class property should be encoded once in a base IPQ
+            inside `getIncrementalInputQueries()` before cloning per-point IPQs.
+            - Division-and-Conquer (DnC) and parallelism are intentionally disabled.
+        """
+        # --- 1) Sanity checks
+        if not getattr(self, "incremental_mode", False):
+            raise RuntimeError(
+                "incrementalSolve called but incremental_mode is False. "
+                "Call addRobustnessBatch(points, epsilon) first."
+            )
+
+        if propertyFilename:
+            raise NotImplementedError(
+                "propertyFilename is not supported in incrementalSolve() yet. "
+                "Pass an empty string '' for now."
+            )
+
+        from maraboupy import MarabouCore  # local import to mirror solve()
+
+        if options is None:
+            options = MarabouCore.Options()
+
+        # Require incremental flag to exist and be settable.
+        options._incremental = True
+
+        # DnC must be off: use _snc (the pybind name for DNC_MODE)
+        if hasattr(options, "_snc") and options._snc:
+            raise ValueError("Incremental mode does not support DnC/parallelism. Please set options._snc = False.")
+        assert not getattr(options, "_snc", False), "Incremental mode does not support DnC/parallelism"
+
+        # --- ?) Build dependency analyzer:
+        # lb,ub = self.getcoveringinputbounds
+        # Maraboucore.build dependency analyzer (lb,ub)
+
+        # --- 2) Build per-point IPQs (shared outputs; per-point input bounds)
+        ipqs = self.getIncrementalInputQueries()
+        if not isinstance(ipqs, (list, tuple)) or len(ipqs) == 0:
+            raise RuntimeError(
+                "getIncrementalInputQueries() returned no IPQs. "
+                "Ensure addRobustnessBatch() was called and the builder is implemented."
+            )
+
+        # --- 3) Solve each point sequentially (analyzer lifetime spans the loop)
+        exitCodes, valsList, statsList = [], [], []
+
+        for idx, ipq in enumerate(ipqs):
+            per_point_filename = ""
+            if filename:
+                per_point_filename = f"{filename}.pt{idx:03d}"
+
+            exitCode, vals, stats = MarabouCore.solve(ipq, options, str(per_point_filename))
+            exitCodes.append(exitCode)
+            valsList.append(vals)
+            statsList.append(stats)
+
+            if verbose:
+                print(f"[{idx}] {exitCode}")
+                if exitCode == "sat":
+                    # Mirror solve(): print inputs then outputs
+                    for j in range(len(self.inputVars)):
+                        for i in range(self.inputVars[j].size):
+                            v = self.inputVars[j].item(i)
+                            if v in vals:
+                                print(f"  input {i} = {vals[v]}")
+                    for j in range(len(self.outputVars)):
+                        for i in range(self.outputVars[j].size):
+                            v = self.outputVars[j].item(i)
+                            if v in vals:
+                                print(f"  output {i} = {vals[v]}")
+
+        return [exitCodes, valsList, statsList]
 
 
     def calculateBounds(self, filename="", verbose=True, options=None):
