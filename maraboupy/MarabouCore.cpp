@@ -311,7 +311,9 @@ struct MarabouOptions
         , _milpTighteningString(
               Options::get()->getString( Options::MILP_SOLVER_BOUND_TIGHTENING_TYPE ).ascii() )
         , _lpSolverString( Options::get()->getString( Options::LP_SOLVER ).ascii() )
-        , _produceProofs( Options::get()->getBool( Options::PRODUCE_PROOFS ) ){};
+        , _produceProofs( Options::get()->getBool( Options::PRODUCE_PROOFS ) )
+        , _incremental( Options::get()->getBool( Options::INCREMENTAL_MODE ) )
+        {};
 
     void setOptions()
     {
@@ -323,6 +325,7 @@ struct MarabouOptions
         Options::get()->setBool( Options::PERFORM_LP_TIGHTENING_AFTER_SPLIT,
                                  _performLpTighteningAfterSplit );
         Options::get()->setBool( Options::PRODUCE_PROOFS, _produceProofs );
+        Options::get()->setBool( Options::INCREMENTAL_MODE, _incremental );
 
         // int options
         Options::get()->setInt( Options::NUM_WORKERS, _numWorkers );
@@ -356,6 +359,7 @@ struct MarabouOptions
     bool _dumpBounds;
     bool _performLpTighteningAfterSplit;
     bool _produceProofs;
+    bool _incremental;
     unsigned _numWorkers;
     unsigned _numBlasThreads;
     unsigned _initialTimeout;
@@ -415,6 +419,7 @@ solve( InputQuery &inputQuery, MarabouOptions &options, std::string redirect = "
         options.setOptions();
 
         bool dnc = Options::get()->getBool( Options::DNC_MODE );
+        bool incremental = Options::get()->getBool( Options::INCREMENTAL_MODE ); //for later use
 
         Engine engine;
 
@@ -566,7 +571,9 @@ PYBIND11_MODULE( MarabouCore, m )
         .def_readwrite( "_numSimulations", &MarabouOptions::_numSimulations )
         .def_readwrite( "_performLpTighteningAfterSplit",
                         &MarabouOptions::_performLpTighteningAfterSplit )
-        .def_readwrite( "_produceProofs", &MarabouOptions::_produceProofs );
+        .def_readwrite( "_produceProofs", &MarabouOptions::_produceProofs )
+        .def_readwrite( "_incremental", &MarabouOptions::_incremental )
+        ;
     m.def( "maraboupyMain", &maraboupyMain, "Run the Marabou command-line interface" );
     m.def( "loadProperty", &loadProperty, "Load a property file into a input query" );
     m.def( "createInputQuery",
