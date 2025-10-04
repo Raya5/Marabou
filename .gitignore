@@ -35,7 +35,7 @@ _deps
 /tools/protobuf*
 /tools/OpenBLAS*
 /tools/onnx*
-
+tools/gurobi11*
 
 build
 /.idea/
@@ -47,3 +47,7 @@ cmake-build-debug/
 /build/
 /wheelhouse/
 .mypy_cache/
+
+
+# debug
+car.sh
