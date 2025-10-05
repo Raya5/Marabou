@@ -97,8 +97,9 @@ class InputQueryBuilder(ABC):
         Args:
             points (list[list[float]]): Each point is a flattened input vector.
             epsilon (float): L-infinity radius around each point.
-            targetLabel (int | None): If provided, encodes the shared output-class
-                property "output[targetLabel] >= output[k] + margin" for all k != targetLabel.
+            targetLabel (int | None): If provided, encodes the negated robustness property
+                as a single disjunction:  ∨_{k≠t} ( y_t - y_k ≤ margin ).
+                This is the standard way to check robustness by contradiction.
                 If None, no output property is added here (caller may add custom properties).
             margin (float): Non-negative margin for the class separation (default 0.0).
         """
@@ -106,9 +107,8 @@ class InputQueryBuilder(ABC):
         self.incremental_points = points
         self.incremental_epsilon = epsilon
 
-        # Optionally encode the shared output-class property once
         if targetLabel is not None:
-            # Flatten outputs in the same way getInputQuery() does
+            # Flatten outputs in the same order as getInputQuery()
             flat_outputs = []
             for outputVarArray in self.outputVars:
                 for outputVar in outputVarArray.flatten():
@@ -120,19 +120,26 @@ class InputQueryBuilder(ABC):
             assert margin >= 0.0, "margin must be non-negative"
 
             y_t = flat_outputs[targetLabel]
-            # For each other class k, enforce: y_t - y_k >= margin  ⇔  (-1)*y_t + (1)*y_k ≤ -margin
+
+            # Build disjunction:  OR_k  ( y_t - y_k <= margin )
+            # Encode each disjunct as: (+1)*y_t + (-1)*y_k <= margin
+            disjuncts = []
             for k, y_k in enumerate(flat_outputs):
                 if k == targetLabel:
                     continue
-                self.addInequality(
-                    vars=[y_t, y_k],
-                    coeffs=[-1.0, 1.0],
-                    scalar=-float(margin),
-                    isProperty=True,  # allow clearProperty() to remove these
-                )
+                eq = MarabouUtils.Equation(MarabouCore.Equation.LE)
+                eq.addAddend(1.0, y_t)
+                eq.addAddend(-1.0, y_k)
+                eq.setScalar(float(margin))
+                # Each disjunct is a list of equations; here each disjunct has exactly one inequality
+                disjuncts.append([eq])
+
+            # Add a single DisjunctionConstraint with all disjuncts
+            self.addDisjunctionConstraint(disjuncts)
 
         print(f"[DEBUG] addRobustnessBatch called: {len(points)} points, ε={epsilon}, "
             f"targetLabel={targetLabel}, margin={margin}")  # TODO: remove later
+
 
 
     def setLowerBound(self, x, v):
@@ -463,8 +470,9 @@ class InputQueryBuilder(ABC):
 
             # Set per-point input bounds
             for i, var in enumerate(flat_input_vars):
-                lb = float(p[i] - epsilon)
-                ub = float(p[i] + epsilon)
+                #TODO: here wew assumed that the input is normalized thus the min is 0 and the max is 1. in addRobustnessBatch i want to have an option to reseave min and max and the defauts are 0,1. 
+                lb = max(float(p[i] - epsilon),0)
+                ub = min(float(p[i] + epsilon),1)
                 ipq.setLowerBound(var, lb)
                 ipq.setUpperBound(var, ub)
 
