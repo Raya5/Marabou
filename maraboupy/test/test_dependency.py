@@ -153,7 +153,7 @@ def test_addRobustnessBatch_sets_flags_and_disjunction():
     """
     net = loadNetworkInONNX("fc_2-2-3.onnx")
     # The toy net has 3 outputs; pick target label 1
-    points = [[0.5, -0.2]]  # model has 2 inputs
+    points = [[0.5, 0.2]]  # model has 2 inputs
     epsilon = 0.1
     target = 1
     margin = 0.0
@@ -233,13 +233,12 @@ def test_getIncrementalInputQueries_bounds_and_count():
 
 def test_getIncrementalInputQueries_length_mismatch_asserts():
     """
-    If a point does not match #inputs, an assertion should fire.
+    If a point does not match #inputs, a ValueError should be raised by addRobustnessBatch.
     """
     net = loadNetworkInONNX("fc_2-2-3.onnx")
-    # This network expects 2 inputs; pass 3 to trigger the assert
-    net.addRobustnessBatch([[0.1, 0.2, 0.3]], 0.01, targetLabel=0)
-    with pytest.raises(AssertionError):
-        _ = net.getIncrementalInputQueries()
+    # This network expects 2 inputs; pass 3 to trigger the error
+    with pytest.raises(ValueError, match="expected 2"):
+        net.addRobustnessBatch([[0.1, 0.2, 0.3]], 0.01, targetLabel=0)
 
 
 def test_incrementalSolve_per_point_filename_and_lengths(monkeypatch, capsys):
@@ -249,7 +248,7 @@ def test_incrementalSolve_per_point_filename_and_lengths(monkeypatch, capsys):
     - The returned lists (exitCodes, valsList, statsList) should match the batch size.
     """
     net = loadNetworkInONNX("fc_2-2-3.onnx")
-    pts = [[0.0, 0.0], [0.1, -0.1], [0.2, 0.2]]
+    pts = [[0.0, 0.0], [0.1, 0.5], [0.2, 0.2]]
     net.addRobustnessBatch(pts, 0.05, targetLabel=0)
 
     # Spy on redirects that MarabouCore.solve receives
@@ -262,8 +261,6 @@ def test_incrementalSolve_per_point_filename_and_lengths(monkeypatch, capsys):
     monkeypatch.setattr(MarabouCore, "solve", fake_solve)
 
     opt = Marabou.createOptions(verbosity=0)
-    if hasattr(opt, "_snc"):
-        opt._snc = False
 
     base = "tmp.out"
     exitCodes, valsList, statsList = net.incrementalSolve(filename=base, verbose=False, options=opt)
@@ -275,6 +272,116 @@ def test_incrementalSolve_per_point_filename_and_lengths(monkeypatch, capsys):
 
     # Filenames are suffixed .pt000, .pt001, .pt002
     assert redirects == [f"{base}.pt000", f"{base}.pt001", f"{base}.pt002"]
+
+
+def _flat_inputs(net):
+    return [int(v) for arr in net.inputVars for v in arr.flatten()]
+
+def test_addRobustnessBatch_raises_if_points_outside_minmax():
+    """
+    When custom input_min/max are provided, all points must lie within them.
+    Violations should raise a ValueError.
+    """
+    net = loadNetworkInONNX("fc_2-2-3.onnx")
+    pts = [[-0.5, 0.2], [0.5, 1.5]]  # first below min, second above max
+
+    with pytest.raises(ValueError, match="outside declared bounds"):
+        net.addRobustnessBatch(
+            pts, epsilon=0.05, targetLabel=0,
+            input_min=0.0, input_max=1.0
+        )
+
+
+
+def test_bounds_scalar_minmax():
+    """
+    Scalar min/max should broadcast to all input dimensions.
+    """
+    net = loadNetworkInONNX("fc_2-2-3.onnx")
+    pts = [[0.2, 0.8]]
+    eps = 0.15
+
+    # non-default scalar range
+    inp_min = 0.1
+    inp_max = 0.9
+
+    net.addRobustnessBatch(pts, eps, targetLabel=1, input_min=inp_min, input_max=inp_max)
+    ipqs = net.getIncrementalInputQueries()
+    assert len(ipqs) == 1
+
+    ipq = ipqs[0]
+    flat_in = _flat_inputs(net)
+
+    # lb = max(p-eps, 0.1), ub = min(p+eps, 0.9)
+    p = pts[0]
+    exp_lbs = [max(p[0] - eps, inp_min), max(p[1] - eps, inp_min)]
+    exp_ubs = [min(p[0] + eps, inp_max), min(p[1] + eps, inp_max)]
+
+    for v, lb, ub in zip(flat_in, exp_lbs, exp_ubs):
+        assert abs(ipq.getLowerBound(v) - lb) < 1e-9
+        assert abs(ipq.getUpperBound(v) - ub) < 1e-9
+
+
+def test_bounds_vector_minmax_asymmetric():
+    """
+    Per-dimension min/max vectors should be respected.
+    """
+    net = loadNetworkInONNX("fc_2-2-3.onnx")
+    pts = [[0.0, 1.0]]
+    eps = 0.2
+
+    inp_min = [-0.5, 0.2]
+    inp_max = [0.3, 1.7]
+
+    net.addRobustnessBatch(pts, eps, targetLabel=2, input_min=inp_min, input_max=inp_max)
+    ipqs = net.getIncrementalInputQueries()
+    assert len(ipqs) == 1
+
+    ipq = ipqs[0]
+    flat_in = _flat_inputs(net)
+
+    p = pts[0]
+    exp_lbs = [max(p[0] - eps, inp_min[0]), max(p[1] - eps, inp_min[1])]
+    exp_ubs = [min(p[0] + eps, inp_max[0]), min(p[1] + eps, inp_max[1])]
+
+    for v, lb, ub in zip(flat_in, exp_lbs, exp_ubs):
+        assert abs(ipq.getLowerBound(v) - lb) < 1e-9
+        assert abs(ipq.getUpperBound(v) - ub) < 1e-9
+
+
+def test_bounds_bad_length_raises():
+    """
+    input_min/input_max vectors must match #inputs; otherwise an error is raised.
+    """
+    net = loadNetworkInONNX("fc_2-2-3.onnx")
+    pts = [[0.1, 0.2]]
+    eps = 0.05
+
+    # too many entries (network has 2 inputs)
+    with pytest.raises((ValueError, AssertionError)):
+        net.addRobustnessBatch(pts, eps, targetLabel=0, input_min=[0.0, 0.0, 0.0], input_max=[1.0, 1.0, 1.0])
+
+    # mismatched lengths
+    with pytest.raises((ValueError, AssertionError)):
+        net.addRobustnessBatch(pts, eps, targetLabel=0, input_min=[0.0], input_max=[1.0, 1.0])
+
+
+def test_bounds_min_gt_max_raises():
+    """
+    If any min > max, an error should be raised.
+    """
+    net = loadNetworkInONNX("fc_2-2-3.onnx")
+    pts = [[0.1, 0.2]]
+    eps = 0.05
+
+    # scalar case: min > max
+    with pytest.raises((ValueError, AssertionError)):
+        net.addRobustnessBatch(pts, eps, targetLabel=0, input_min=1.0, input_max=0.0)
+
+    # vector case: one dim has min > max
+    with pytest.raises((ValueError, AssertionError)):
+        net.addRobustnessBatch(pts, eps, targetLabel=0, input_min=[-1.0, 0.8], input_max=[0.5, 0.7])
+
 
 
 # ----------- TODOs for later stages -----------
