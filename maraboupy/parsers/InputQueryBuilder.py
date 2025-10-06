@@ -53,6 +53,8 @@ class InputQueryBuilder(ABC):
         self.incremental_mode = False
         self.incremental_points = []
         self.incremental_epsilon = None
+        self.incremental_input_min = None   # per-dim mins or scalar
+        self.incremental_input_max = None   # per-dim maxs or scalar
 
     def clearProperty(self):
         """Clear the lower bounds and upper bounds map, and the self.additionEquList
@@ -89,26 +91,66 @@ class InputQueryBuilder(ABC):
         else:
             self.equList += [x]
 
-    def addRobustnessBatch(self, points, epsilon, targetLabel=None, margin=0.0):
+    def addRobustnessBatch(self, points, epsilon, targetLabel=None, margin=0.0,
+                        input_min=0.0, input_max=1.0):
         """
-        Function to add a batch of base input points for incremental robustness verification.
-        Enables incremental mode in the verification engine.
+        Add a batch for incremental robustness and (optionally) encode the negated
+        robustness property as a single disjunction:  OR_{k!=t} ( y_t - y_k <= margin ).
 
         Args:
-            points (list[list[float]]): Each point is a flattened input vector.
+            points (list[list[float]]): Base inputs (flattened).
             epsilon (float): L-infinity radius around each point.
-            targetLabel (int | None): If provided, encodes the negated robustness property
-                as a single disjunction:  ∨_{k≠t} ( y_t - y_k ≤ margin ).
-                This is the standard way to check robustness by contradiction.
-                If None, no output property is added here (caller may add custom properties).
-            margin (float): Non-negative margin for the class separation (default 0.0).
+            targetLabel (int|None): If provided, encodes OR_{k!=t}(y_t - y_k <= margin).
+            margin (float): Non-negative class-separation margin.
+            input_min (float | list[float] | np.ndarray): Per-dimension or scalar lower limits.
+            input_max (float | list[float] | np.ndarray): Per-dimension or scalar upper limits.
         """
+        import numpy as np
+
         self.incremental_mode = True
         self.incremental_points = points
-        self.incremental_epsilon = epsilon
+        self.incremental_epsilon = float(epsilon)
 
+        # Determine number of input dims from the network
+        flat_input_vars = []
+        for inputVarArray in self.inputVars:
+            for inputVar in inputVarArray.flatten():
+                flat_input_vars.append(int(inputVar))
+        num_inputs = len(flat_input_vars)
+        if num_inputs == 0:
+            raise RuntimeError("No input variables found; cannot set batch.")
+
+        # Broadcast/validate input_min / input_max to per-dim arrays
+        def _as_per_dim(arr_or_scalar, name):
+            arr = np.asarray(arr_or_scalar, dtype=float)
+            if arr.ndim == 0:                # scalar -> broadcast
+                return np.full((num_inputs,), float(arr), dtype=float)
+            if arr.shape == (num_inputs,):   # already per-dim
+                return arr.astype(float)
+            raise ValueError(f"{name} must be scalar or length {num_inputs}, got shape {arr.shape}")
+
+        mins = _as_per_dim(input_min, "input_min")
+        maxs = _as_per_dim(input_max, "input_max")
+        if not np.all(mins <= maxs + 0.0):
+            raise ValueError("input_min must be <= input_max elementwise")
+
+        # --- Validate that all points lie within the provided [min, max] bounds
+        for idx, p in enumerate(points):
+            if len(p) != num_inputs:
+                raise ValueError(f"Point #{idx} has length {len(p)}, expected {num_inputs}.")
+            p_arr = np.asarray(p, dtype=float)
+            if np.any(p_arr < mins - 1e-9) or np.any(p_arr > maxs + 1e-9):
+                raise ValueError(
+                    f"Point #{idx} contains values outside declared bounds: "
+                    f"min(p)={np.min(p_arr):.5f}, max(p)={np.max(p_arr):.5f}, "
+                    f"expected in [{np.min(mins):.5f}, {np.max(maxs):.5f}]"
+                )
+
+        self.incremental_input_min = mins
+        self.incremental_input_max = maxs
+
+        # Optionally encode the shared disjunction (negated robustness)
         if targetLabel is not None:
-            # Flatten outputs in the same order as getInputQuery()
             flat_outputs = []
             for outputVarArray in self.outputVars:
                 for outputVar in outputVarArray.flatten():
@@ -137,9 +179,10 @@ class InputQueryBuilder(ABC):
             # Add a single DisjunctionConstraint with all disjuncts
             self.addDisjunctionConstraint(disjuncts)
 
-        print(f"[DEBUG] addRobustnessBatch called: {len(points)} points, ε={epsilon}, "
-            f"targetLabel={targetLabel}, margin={margin}")  # TODO: remove later
-
+        print(f"[DEBUG] addRobustnessBatch: n_points={len(points)}, ε={epsilon}, "
+            f"targetLabel={targetLabel}, margin={margin}, "
+            f"[min/max]=[{np.min(self.incremental_input_min):.3g},"
+            f"{np.max(self.incremental_input_max):.3g}]")  # TODO: remove later
 
 
     def setLowerBound(self, x, v):
@@ -441,18 +484,22 @@ class InputQueryBuilder(ABC):
 
         points = self.incremental_points
         epsilon = self.incremental_epsilon
+        mins = self.incremental_input_min
+        maxs = self.incremental_input_max
+
         if points is None or epsilon is None or len(points) == 0:
             raise RuntimeError(
                 "Incremental batch is empty or not initialized. "
                 "Ensure addRobustnessBatch(points, epsilon) was called with a non-empty list."
             )
+        if mins is None or maxs is None:
+            raise RuntimeError("input_min/input_max were not initialized; call addRobustnessBatch with min/max.")
 
-        # Build the flat ordering of input variable IDs (mirrors getInputQuery()’s flatten)
+        # Flatten input vars in the same order as getInputQuery()
         flat_input_vars = []
         for inputVarArray in self.inputVars:
             for inputVar in inputVarArray.flatten():
                 flat_input_vars.append(int(inputVar))
-
         num_inputs = len(flat_input_vars)
 
         # Validate each point’s length
@@ -462,17 +509,22 @@ class InputQueryBuilder(ABC):
 
         # Build one IPQ per point
         ipqs = []
-        if self.incremental_mode:
-            print(f"[DEBUG] getIncrementalInputQueries: building {len(points)} IPQs, ε={epsilon}")
+        print(f"[DEBUG] getIncrementalInputQueries: building {len(points)} IPQs, ε={epsilon}")
 
         for pt_idx, p in enumerate(points):
             ipq = self.getInputQuery()  # includes current constraints, IO markings, etc.
 
-            # Set per-point input bounds
             for i, var in enumerate(flat_input_vars):
-                #TODO: here wew assumed that the input is normalized thus the min is 0 and the max is 1. in addRobustnessBatch i want to have an option to reseave min and max and the defauts are 0,1. 
-                lb = max(float(p[i] - epsilon),0)
-                ub = min(float(p[i] + epsilon),1)
+                base_lb = float(p[i] - epsilon)
+                base_ub = float(p[i] + epsilon)
+                lb = max(base_lb, float(mins[i]))
+                ub = min(base_ub, float(maxs[i]))
+                if lb > ub:
+                    raise ValueError(
+                        f"Clamped bounds invalid at point {pt_idx}, dim {i}: "
+                        f"[{lb}, {ub}] from p={p[i]}, eps={epsilon}, "
+                        f"min={mins[i]}, max={maxs[i]}"
+                    )
                 ipq.setLowerBound(var, lb)
                 ipq.setUpperBound(var, ub)
 
