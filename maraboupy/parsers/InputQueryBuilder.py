@@ -458,6 +458,51 @@ class InputQueryBuilder(ABC):
 
         return ipq
 
+    def getCoveringInputBounds(self):
+        """
+        Compute covering input bounds over the whole batch:
+        cover_lb[i] = min_j max(points[j][i] - eps, mins[i])
+        cover_ub[i] = max_j min(points[j][i] + eps, maxs[i])
+        Returns:
+            (cover_lb, cover_ub): two Python lists of floats, length = #inputs
+        Preconditions:
+            - addRobustnessBatch(...) called (incremental_* fields set)
+            - points have correct length
+        """
+        if not self.incremental_mode:
+            raise RuntimeError("getCoveringInputBounds called but incremental_mode is False")
+
+        points = self.incremental_points
+        eps    = self.incremental_epsilon
+        mins   = self.incremental_input_min
+        maxs   = self.incremental_input_max
+
+        if points is None or eps is None or len(points) == 0:
+            raise RuntimeError("Incremental batch is empty or not initialized.")
+        if mins is None or maxs is None:
+            raise RuntimeError("input_min/input_max were not initialized; call addRobustnessBatch with min/max.")
+
+        # Flatten inputs in the same order as getInputQuery()
+        flat_input_vars = []
+        for inputVarArray in self.inputVars:
+            for inputVar in inputVarArray.flatten():
+                flat_input_vars.append(int(inputVar))
+        num_inputs = len(flat_input_vars)
+
+        # Length check
+        for idx, p in enumerate(points):
+            if len(p) != num_inputs:
+                raise ValueError(f"Point #{idx} has length {len(p)}, expected {num_inputs}.")
+
+        cover_lb = []
+        cover_ub = []
+        for i in range(num_inputs):
+            lb_i = min(max(p[i] - eps, float(mins[i])) for p in points)
+            ub_i = max(min(p[i] + eps, float(maxs[i])) for p in points)
+            cover_lb.append(float(lb_i))
+            cover_ub.append(float(ub_i))
+
+        return cover_lb, cover_ub
 
     def getIncrementalInputQueries(self):
         """
@@ -528,7 +573,6 @@ class InputQueryBuilder(ABC):
                 ipq.setLowerBound(var, lb)
                 ipq.setUpperBound(var, ub)
 
-            # TODO (future): ipq.registerDependencyAnalyzer(analyzer_ptr)
             ipqs.append(ipq)
 
         return ipqs

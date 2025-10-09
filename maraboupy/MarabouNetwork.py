@@ -126,7 +126,7 @@ class MarabouNetwork(InputQueryBuilder):
             inside `getIncrementalInputQueries()` before cloning per-point IPQs.
             - Division-and-Conquer (DnC) and parallelism are intentionally disabled.
         """
-        # --- 1) Sanity checks
+        # --- 0) Sanity checks
         if not getattr(self, "incremental_mode", False):
             raise RuntimeError(
                 "incrementalSolve called but incremental_mode is False. "
@@ -152,9 +152,22 @@ class MarabouNetwork(InputQueryBuilder):
             raise ValueError("Incremental mode does not support DnC/parallelism. Please set options._snc = False.")
         assert not getattr(options, "_snc", False), "Incremental mode does not support DnC/parallelism"
 
-        # --- ?) Build dependency analyzer:
-        # lb,ub = self.getcoveringinputbounds
-        # Maraboucore.build dependency analyzer (lb,ub)
+        # --- 1) Build dependency analyzer:
+        base_ipq = self.getInputQuery()
+
+        # flatten input vars to set bounds in the same order as getInputQuery()
+        flat_inputs = []
+        for inputVarArray in self.inputVars:
+            for inputVar in inputVarArray.flatten():
+                flat_inputs.append(int(inputVar))
+
+        cover_lb, cover_ub = self.getCoveringInputBounds()
+        # set covering bounds on base_ipq
+        for i, v in enumerate(flat_inputs):
+            base_ipq.setLowerBound(v, cover_lb[i])
+            base_ipq.setUpperBound(v, cover_ub[i])
+
+        analyzer = MarabouCore.buildDependencyAnalyzer(base_ipq)
 
         # --- 2) Build per-point IPQs (shared outputs; per-point input bounds)
         ipqs = self.getIncrementalInputQueries()
@@ -172,6 +185,7 @@ class MarabouNetwork(InputQueryBuilder):
             if filename:
                 per_point_filename = f"{filename}.pt{idx:03d}"
 
+            ipq.setDependencyAnalyzer(analyzer)
             exitCode, vals, stats = MarabouCore.solve(ipq, options, str(per_point_filename))
             exitCodes.append(exitCode)
             valsList.append(vals)
