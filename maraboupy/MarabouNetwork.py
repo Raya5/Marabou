@@ -139,8 +139,6 @@ class MarabouNetwork(InputQueryBuilder):
                 "Pass an empty string '' for now."
             )
 
-        from maraboupy import MarabouCore  # local import to mirror solve()
-
         if options is None:
             options = MarabouCore.Options()
 

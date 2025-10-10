@@ -42,6 +42,11 @@
 #include "SoftmaxConstraint.h"
 #include "VnnLibParser.h"
 
+// incremental 
+#include "DependencyAnalyzer.h"
+#include "Preprocessor.h"
+#include "GlobalConfiguration.h"
+
 #include <fcntl.h>
 #include <map>
 #include <pybind11/pybind11.h>
@@ -540,6 +545,16 @@ void loadQuery( std::string filename, InputQuery &inputQuery )
     return QueryLoader::loadQuery( String( filename ), inputQuery );
 }
 
+// incremental 
+std::shared_ptr<DependencyAnalyzer>
+buildDependencyAnalyzer( const InputQuery &baseIpq )
+{
+    // non-owning pointer to the same InputQuery object pybind is passing in
+    return std::make_shared<DependencyAnalyzer>( &baseIpq );
+}
+
+
+
 // Code necessary to generate Python library
 // Describes which classes and functions are exposed to API
 PYBIND11_MODULE( MarabouCore, m )
@@ -820,6 +835,9 @@ PYBIND11_MODULE( MarabouCore, m )
         .def( "markInputVariable", &InputQuery::markInputVariable )
         .def( "markOutputVariable", &InputQuery::markOutputVariable )
         .def( "outputVariableByIndex", &InputQuery::outputVariableByIndex );
+        // incremental
+        // .def("setDependencyAnalyzer", &InputQuery::setDependencyAnalyzer)
+        // .def("getDependencyAnalyzer", &InputQuery::getDependencyAnalyzer);
     py::enum_<PiecewiseLinearFunctionType>( m, "PiecewiseLinearFunctionType" )
         .value( "ReLU", PiecewiseLinearFunctionType::RELU )
         .value( "AbsoluteValue", PiecewiseLinearFunctionType::ABSOLUTE_VALUE )
@@ -962,4 +980,27 @@ PYBIND11_MODULE( MarabouCore, m )
         .def( "getDoubleAttribute", &Statistics::getDoubleAttribute )
         .def( "getTotalTimeInMicro", &Statistics::getTotalTimeInMicro )
         .def( "hasTimedOut", &Statistics::hasTimedOut );
+    
+    // === incremental ===
+
+    // Minimal class binding so Python can hold the analyzer
+    py::class_<DependencyAnalyzer, std::shared_ptr<DependencyAnalyzer>>(m, "DependencyAnalyzer")
+        .def("getBaseInputQuery", &DependencyAnalyzer::getBaseInputQuery);
+
+    // Factory function exposed to Python
+    m.def(
+        "buildDependencyAnalyzer",
+        &buildDependencyAnalyzer,
+        R"pbdoc(
+            Build a DependencyAnalyzer from a base InputQuery that already has covering input bounds set.
+
+            Args:
+                baseIpq (MarabouCore.InputQuery): InputQuery with covering bounds encoded.
+
+            Returns:
+                DependencyAnalyzer: a reusable analyzer object to attach to per-point InputQueries.
+        )pbdoc",
+        py::arg("baseIpq")
+    );
+
 }
