@@ -16,6 +16,8 @@
 #include "Preprocessor.h"
 #include "GlobalConfiguration.h"
 // #include "NetworkLevelReasoner.h"
+#include "Tightening.h"              // for Tightening
+#include "FloatUtils.h"              // for gt/lt comparisons
 
 DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq )
     : _baseIpq( baseIpq )
@@ -23,7 +25,7 @@ DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq )
     , _networkLevelReasoner( nullptr )
 {
     buildFromBase();
-    std::printf("[DA] initial _baseIpq: vars=%u, eqs=%u",
+    std::printf("[DA] initial _baseIpq: vars=%u, eqs=%u\n",
         _baseIpq->getNumberOfVariables(),
         _baseIpq->getNumberOfEquations());
 }
@@ -56,6 +58,8 @@ void DependencyAnalyzer::buildFromBase()
                             "Preprocessing failed: NetworkLevelReasoner is null." );
     }
     _networkLevelReasoner->computeSuccessorLayers();
+    unsigned numTightened = runBoundTightening();
+    printf("[DA] first DeepPoly tightening: %u tightenings\n", numTightened);
     // (no tableau hookup, no dumps)
 }
 
@@ -77,6 +81,48 @@ void DependencyAnalyzer::printSummary() const
         _preprocessedQuery ? "yes" : "no",
         _networkLevelReasoner ? "yes" : "no"
     );
+}
+
+unsigned DependencyAnalyzer::runBoundTightening()
+{
+    if ( !_preprocessedQuery || !_networkLevelReasoner )
+    {
+        printf("runBoundTightening called before buildFromBase()");
+        throw MarabouError( MarabouError::DEBUGGING_ERROR,
+            "runBoundTightening called before buildFromBase()" );
+    }
+
+    // 1) Run DeepPoly over the current bounds held by the preprocessed query / NLR.
+    _networkLevelReasoner->deepPolyPropagation();
+
+    // 2) Collect proposed tightenings.
+    List<Tightening> tightenings;
+    _networkLevelReasoner->getConstraintTightenings( tightenings );
+
+    // 3) Apply them back to the preprocessed query (like Engine does).
+    unsigned numTightened = 0;
+    for ( const auto &t : tightenings )
+    {
+        const unsigned v = t._variable;
+        const double   x = t._value;
+        if ( t._type == Tightening::LB )
+        {
+            if ( FloatUtils::gt( x, _preprocessedQuery->getLowerBound( v ) ) )
+            {
+                _preprocessedQuery->setLowerBound( v, x );
+                ++numTightened;
+            }
+        }
+        else /* UB */
+        {
+            if ( FloatUtils::lt( x, _preprocessedQuery->getUpperBound( v ) ) )
+            {
+                _preprocessedQuery->setUpperBound( v, x );
+                ++numTightened;
+            }
+        }
+    }
+    return numTightened;
 }
 
 //

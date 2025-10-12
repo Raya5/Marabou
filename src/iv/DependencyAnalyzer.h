@@ -54,6 +54,11 @@ public:
     */
     void printSummary() const;
 
+    /*
+      Runs DeepPoly once and applies the resulting tightenings to the preprocessed query.
+      Returns how many bounds got tightened.
+    */
+    unsigned runBoundTightening();
 
 private:
     /*
