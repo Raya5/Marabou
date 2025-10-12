@@ -834,10 +834,10 @@ PYBIND11_MODULE( MarabouCore, m )
         .def( "inputVariableByIndex", &InputQuery::inputVariableByIndex )
         .def( "markInputVariable", &InputQuery::markInputVariable )
         .def( "markOutputVariable", &InputQuery::markOutputVariable )
-        .def( "outputVariableByIndex", &InputQuery::outputVariableByIndex );
+        .def( "outputVariableByIndex", &InputQuery::outputVariableByIndex )
         // incremental
-        // .def("setDependencyAnalyzer", &InputQuery::setDependencyAnalyzer)
-        // .def("getDependencyAnalyzer", &InputQuery::getDependencyAnalyzer);
+        .def("setDependencyAnalyzer", &InputQuery::setDependencyAnalyzer)
+        .def("getDependencyAnalyzer", &InputQuery::getDependencyAnalyzer);
     py::enum_<PiecewiseLinearFunctionType>( m, "PiecewiseLinearFunctionType" )
         .value( "ReLU", PiecewiseLinearFunctionType::RELU )
         .value( "AbsoluteValue", PiecewiseLinearFunctionType::ABSOLUTE_VALUE )

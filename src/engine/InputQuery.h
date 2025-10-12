@@ -27,8 +27,12 @@
 #include "PiecewiseLinearConstraint.h"
 #include "context/cdo.h"
 
+
 #include <context/cdlist.h>
 #include <context/context.h>
+
+// --- Incremental ---
+class DependencyAnalyzer;
 
 class InputQuery : public IQuery
 {
@@ -167,6 +171,10 @@ public:
         _userContext.popto( toLevel );
     };
 
+    // --- Incremental / Dependency analyzer support ---
+    void setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> analyzer );
+    std::shared_ptr<DependencyAnalyzer> getDependencyAnalyzer() const;
+
 private:
     /*
       This is an outward-facing context which manages incrementally pushing and popping constraints
@@ -202,6 +210,11 @@ private:
       Free any stored pl constraints.
     */
     void freeConstraintsIfNeeded();
+
+    // --- Incremental ---
+    // Holds a shared analyzer instance, reused across per-point IPQs
+    std::shared_ptr<DependencyAnalyzer> _dependencyAnalyzer;
+
 };
 
 #endif // __InputQuery_h__

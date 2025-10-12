@@ -28,6 +28,10 @@
 #include "RoundConstraint.h"
 #include "SoftmaxConstraint.h"
 
+// --- Incremental ---
+#include <memory>
+#include "DependencyAnalyzer.h"
+
 #define INPUT_QUERY_LOG( x, ... )                                                                  \
     LOG( GlobalConfiguration::INPUT_QUERY_LOGGING, "Marabou Query: %s\n", x )
 
@@ -395,4 +399,15 @@ void InputQuery::dump() const
     Query *query = generateQuery();
     query->dump();
     delete query;
+}
+
+// --- Incremental ---
+void InputQuery::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> analyzer )
+{
+    _dependencyAnalyzer = std::move( analyzer );
+}
+
+std::shared_ptr<DependencyAnalyzer> InputQuery::getDependencyAnalyzer() const
+{
+    return _dependencyAnalyzer;
 }
