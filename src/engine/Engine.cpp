@@ -33,6 +33,8 @@
 #include "VariableOutOfBoundDuringOptimizationException.h"
 #include "Vector.h"
 #include "DependencyManager.h"
+// --- incremental ---
+#include "DependencyAnalyzer.h"
 
 #include <random>
 
@@ -74,6 +76,8 @@ Engine::Engine()
     , _produceUNSATProofs( Options::get()->getBool( Options::PRODUCE_PROOFS ) )
     , _groundBoundManager( _context )
     , _UNSATCertificate( NULL )
+    , _incrementalMode( Options::get()->getBool( Options::INCREMENTAL_MODE ) )
+    , _dependencyAnalyzer( NULL )
 {
     _searchTreeHandler.setStatistics( &_statistics );
     _tableau->setStatistics( &_statistics );
@@ -193,6 +197,14 @@ bool Engine::solve( double timeoutInSeconds )
     SignalHandler::getInstance()->initialize();
     SignalHandler::getInstance()->registerClient( this );
 
+    // --- incremental ---
+    if ( _dependencyAnalyzer ) {
+        ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
+        // printf( "[Engine] Incremental analyzer attached (MVP)\n" );
+    } else if ( Options::get()->getBool( Options::INCREMENTAL_MODE ) ) {
+        printf( "[Engine] Incremental mode enabled (no analyzer attached)\n" );
+    }
+
     // Register the boundManager with all the PL constraints
     for ( auto &plConstraint : _plConstraints )
         plConstraint->registerBoundManager( &_boundManager );
@@ -217,6 +229,11 @@ bool Engine::solve( double timeoutInSeconds )
         _milpEncoder->setStatistics( &_statistics );
         _milpEncoder->encodeQuery( *_gurobi, *_preprocessedQuery, true );
         ENGINE_LOG( "Encoding convex relaxation into Gurobi - done" );
+    }
+
+    if (_incrementalMode)
+    {
+        printf( "\n**************   incremental Mode **************\n" );
     }
 
     mainLoopStatistics();
@@ -4067,4 +4084,15 @@ Engine::analyseExplanationDependencies( const SparseUnsortedList &explanation,
     }
 
     return entries;
+}
+
+
+// --- incremental ---
+void Engine::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer ) 
+{
+     _dependencyAnalyzer = std::move( dependencyAnalyzer ); 
+}
+std::shared_ptr<DependencyAnalyzer> Engine::getDependencyAnalyzer() const 
+{ 
+    return _dependencyAnalyzer; 
 }

@@ -27,7 +27,6 @@
 #include "PiecewiseLinearConstraint.h"
 #include "context/cdo.h"
 
-
 #include <context/cdlist.h>
 #include <context/context.h>
 

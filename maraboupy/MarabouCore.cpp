@@ -428,11 +428,29 @@ solve( InputQuery &inputQuery, MarabouOptions &options, std::string redirect = "
 
         Engine engine;
 
+        // If incremental mode: plumb any analyzer carried by the IPQ
+        if ( incremental ) {
+            auto dependencyAnalyzer = inputQuery.getDependencyAnalyzer();
+            if ( dependencyAnalyzer ) 
+            {
+                engine.setDependencyAnalyzer( dependencyAnalyzer );
+            }
+            else
+            {
+                throw MarabouError( MarabouError::DEBUGGING_ERROR, "Incremental mode set but no dependency analyzer passed with the InputQuery." );
+            }
+        }
+
         if ( !engine.processInputQuery( inputQuery ) )
             return std::make_tuple(
                 exitCodeToString( engine.getExitCode() ), ret, *( engine.getStatistics() ) );
         if ( dnc )
         {
+            if ( incremental || inputQuery.getDependencyAnalyzer() ) 
+            {
+                // mirror your Python-side guard: analyzer/incremental does not support DnC
+                throw MarabouError( MarabouError::DEBUGGING_ERROR, "Incremental mode does not support DnC/parallelism" );
+            }
             auto dncManager = std::unique_ptr<DnCManager>( new DnCManager( &inputQuery ) );
 
             dncManager->solve();

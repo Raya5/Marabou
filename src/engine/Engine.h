@@ -53,7 +53,8 @@
 
 #include <atomic>
 #include <context/context.h>
-
+// --- incremental ---
+#include <memory>
 
 #ifdef _WIN32
 #undef ERROR
@@ -65,7 +66,8 @@ class EngineState;
 class Query;
 class PiecewiseLinearConstraint;
 class String;
-
+// --- incremental ---
+class DependencyAnalyzer;
 
 using CVC4::context::Context;
 
@@ -301,6 +303,7 @@ public:
     /*
       Add lemma to the UNSAT Certificate
     */
+  
     void incNumOfLemmas() override;
 
     /*
@@ -313,6 +316,10 @@ public:
      For debugging purpose
     */
     const List<PiecewiseLinearConstraint *> *getPiecewiseLinearConstraints() const override;
+
+    // --- incremental ---
+    void setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer );
+    std::shared_ptr<DependencyAnalyzer> getDependencyAnalyzer() const;
 
 private:
     enum BasisRestorationRequired {
@@ -931,6 +938,11 @@ private:
                                     int explainedVar,
                                     bool isUpper,
                                     double targetBound );
+
+    // --- incremental ---
+    bool _incrementalMode;
+    std::shared_ptr<DependencyAnalyzer> _dependencyAnalyzer; // null if not incremental
+
 };
 
 #endif // __Engine_h__
