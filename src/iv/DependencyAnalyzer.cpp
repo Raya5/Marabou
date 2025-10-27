@@ -61,6 +61,7 @@ void DependencyAnalyzer::buildFromBase()
     unsigned numTightened = runBoundTightening();
     printf("[DA] first DeepPoly tightening: %u tightenings\n", numTightened);
     // (no tableau hookup, no dumps)
+    debugdiff()
 }
 
 DependencyAnalyzer::~DependencyAnalyzer() = default;
@@ -124,6 +125,65 @@ unsigned DependencyAnalyzer::runBoundTightening()
     }
     return numTightened;
 }
+
+
+
+/**************** For Debugging ********************/
+// DependencyAnalyzer.cpp (using _preprocessedQuery)
+BoundsSnapshot DependencyAnalyzer::snapshotBounds(const std::vector<unsigned> &vars) {
+    BoundsSnapshot s;
+    if (!vars.empty()) {
+        for (auto v : vars)
+            s.byVar[v] = { _preprocessedQuery->getLowerBound(v),
+                           _preprocessedQuery->getUpperBound(v) };
+    } else {
+        const auto n = _preprocessedQuery->getNumberOfVariables();
+        for (unsigned v = 0; v < n; ++v)
+            s.byVar[v] = { _preprocessedQuery->getLowerBound(v),
+                           _preprocessedQuery->getUpperBound(v) };
+    }
+    return s;
+}
+
+std::vector<std::tuple<unsigned,double,double,double,double>>
+DependencyAnalyzer::diffBounds(const BoundsSnapshot &a, const BoundsSnapshot &b, double eps) {
+    std::vector<std::tuple<unsigned,double,double,double,double>> out;
+    for (const auto &kv : b.byVar) {
+        auto v = kv.first;
+        auto [lb2, ub2] = kv.second;
+        auto it = a.byVar.find(v);
+        if (it == a.byVar.end()) continue;
+        auto [lb1, ub1] = it->second;
+        bool chgLb = std::fabs(lb2 - lb1) > eps;
+        bool chgUb = std::fabs(ub2 - ub1) > eps;
+        if (chgLb || chgUb) out.emplace_back(v, lb1, ub1, lb2, ub2);
+    }
+    return out;
+}
+
+void DependencyAnalyzer::printBoundsDiff(const std::vector<std::tuple<unsigned,double,double,double,double>> &d,
+                                         unsigned maxItems) {
+    unsigned shown = 0;
+    for (const auto &t : d) {
+        if (shown++ >= maxItems) { printf("... truncated ...\n"); break; }
+        unsigned v; double lb1, ub1, lb2, ub2;
+        std::tie(v, lb1, ub1, lb2, ub2) = t;
+        printf("[DA] v=%u: LB %.6g -> %.6g | UB %.6g -> %.6g\n", v, lb1, lb2, ub1, ub2);
+    }
+    if (d.empty()) printf("[DA] no bound changes\n");
+}
+
+void DependencyAnalyzer::debugdiff()
+{
+auto snap1 = snapshotBounds();
+runBoundTightening();
+auto snap2 = snapshotBounds();
+auto diff  = diffBounds(snap1, snap2, 1e-9);
+printBoundsDiff(diff, 40);
+}
+/**************** End For Debugging ********************/
+
+
 
 //
 // Local Variables:

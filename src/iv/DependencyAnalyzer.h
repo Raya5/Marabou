@@ -26,6 +26,13 @@
 
 // #include <memory>
 
+/**************** For Debugging ********************/
+struct BoundsSnapshot {
+    struct Entry { double lb, ub; };
+    std::unordered_map<unsigned, Entry> byVar; // var -> {lb, ub}
+};
+/**************** End For Debugging ********************/
+
 class DependencyAnalyzer
 {
 public:
@@ -59,6 +66,17 @@ public:
       Returns how many bounds got tightened.
     */
     unsigned runBoundTightening();
+
+    /**************** For Debugging ********************/
+
+    BoundsSnapshot snapshotBounds(const std::vector<unsigned> &vars = {});
+    std::vector<std::tuple<unsigned,double,double,double,double>>
+    diffBounds(const BoundsSnapshot &a, const BoundsSnapshot &b, double eps = 1e-9);
+    void printBoundsDiff(const std::vector<std::tuple<unsigned,double,double,double,double>> &diff,
+                        unsigned maxItems = 50);
+    void debugdiff();
+
+    /**************** End For Debugging ********************/
 
 private:
     /*
