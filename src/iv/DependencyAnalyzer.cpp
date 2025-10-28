@@ -18,6 +18,7 @@
 // #include "NetworkLevelReasoner.h"
 #include "Tightening.h"              // for Tightening
 #include "FloatUtils.h"              // for gt/lt comparisons
+#include "Layer.h"
 
 DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq )
     : _baseIpq( baseIpq )
@@ -60,8 +61,10 @@ void DependencyAnalyzer::buildFromBase()
     _networkLevelReasoner->computeSuccessorLayers();
     unsigned numTightened = runBoundTightening();
     printf("[DA] first DeepPoly tightening: %u tightenings\n", numTightened);
+    computeSameLayerDependencies(1);
+    computeSameLayerDependencies(3);
     // (no tableau hookup, no dumps)
-    debugdiff()
+    // debugdiff()
 }
 
 DependencyAnalyzer::~DependencyAnalyzer() = default;
@@ -125,6 +128,145 @@ unsigned DependencyAnalyzer::runBoundTightening()
     }
     return numTightened;
 }
+
+void DependencyAnalyzer::collectUnstableNeurons( unsigned layerIndex,
+                                                 std::vector<unsigned> &unstableNeurons ) const
+{
+    unstableNeurons.clear();
+
+    if ( !_networkLevelReasoner ) {
+        printf("[DA] collectUnstableNeurons: NLR not set\n");
+        return;
+    }
+
+    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
+    if ( !weightedSumLayer ) {
+        printf("[DA] collectUnstableNeurons: layer %u not found in NLR\n", layerIndex);
+        return;
+    }
+
+    const unsigned numNeurons = weightedSumLayer->getSize();
+
+    // A neuron is considered "unstable" if its pre-activation interval straddles 0.
+    for ( unsigned neuronIndex = 0; neuronIndex < numNeurons; ++neuronIndex )
+    {
+        double lowerPreActivation = weightedSumLayer->getLb( neuronIndex );
+        double upperPreActivation = weightedSumLayer->getUb( neuronIndex );
+        //################### FOR DEBUGING ########################
+        unsigned v = weightedSumLayer->neuronToVariable( neuronIndex );
+
+        double nlrLb = weightedSumLayer->getLb( neuronIndex );
+        double pqLb  = _preprocessedQuery->getLowerBound( v );
+
+        double nlrUb = weightedSumLayer->getUb( neuronIndex );
+        double pqUb  = _preprocessedQuery->getUpperBound( v );
+
+        if ( !FloatUtils::areEqual( nlrLb, pqLb, 1e-9 ) ||
+            !FloatUtils::areEqual( nlrUb, pqUb, 1e-9 ) )
+        {
+            printf("[DA][warn] bound mismatch at layer %u neuron %u "
+                "(var %u): NLR [%.6g, %.6g] vs PQ [%.6g, %.6g]\n",
+                layerIndex, neuronIndex, v, nlrLb, nlrUb, pqLb, pqUb);
+        }
+
+        //################### END DEBUGING ########################
+
+        if ( lowerPreActivation < 0.0 && upperPreActivation > 0.0 )
+            unstableNeurons.push_back( neuronIndex );
+    }
+
+    printf("[DA] Layer %u: found %zu unstable neurons\n", layerIndex, unstableNeurons.size());
+}
+
+
+unsigned DependencyAnalyzer::computeSameLayerDependencies( unsigned weightedSumLayerIndex )
+{
+    if ( !_networkLevelReasoner ) {
+        printf("[DA] computeSameLayerDependencies: NLR not set\n");
+        return 0;
+    }
+
+    // ensure NLR bounds are current (you already run DeepPoly elsewhere; this is cheap)
+    _networkLevelReasoner->obtainCurrentBounds(*_preprocessedQuery); 
+
+    // sanity: layer must be WEIGHTED_SUM (pre-activation layer)
+    const auto *weightedSumLayer = _networkLevelReasoner->getLayer( weightedSumLayerIndex );
+    if ( !weightedSumLayer || weightedSumLayer->getLayerType() != NLR::Layer::WEIGHTED_SUM ) {
+        printf("[DA] layer %u is not WEIGHTED_SUM\n", weightedSumLayerIndex);
+        return 0;
+    }
+    
+    // build unstable set from pre-activation bounds of this layer
+    std::vector<unsigned> unstable;
+    collectUnstableNeurons( weightedSumLayerIndex, unstable );
+    if ( unstable.size() < 2 ) return 0;
+
+    // auto &bucket = _pairsByLayer[ weightedSumLayerIndex ];
+    unsigned added = 0;
+    
+    // enumerate unordered pairs
+    for ( size_t i = 0; i + 1 < unstable.size(); ++i ) {
+        unsigned q = unstable[i];
+        for ( size_t j = i + 1; j < unstable.size(); ++j ) {
+            unsigned r = unstable[j];
+            ASSERT(q < r);
+            if (detectAndRecordPairConflict(weightedSumLayerIndex, q, r))
+                ++added;
+        }
+    }
+    printf("[DA] layer %u: scanned %zu pairs, added %u conflicts\n",
+           weightedSumLayerIndex, ( unstable.size() * ( unstable.size() - 1 ) ) / 2, added );
+
+    printf("*******************  ACHIEVED  ******************* \n");
+    return added;
+}
+
+
+bool DependencyAnalyzer::detectAndRecordPairConflict(unsigned layerIndex,
+                                 unsigned q, unsigned r)
+{
+    Dependency d;
+    if (!analyzePairConflict(layerIndex, q, r, d))
+        return false;
+    recordConflict(std::move(d));
+    return true;
+}
+
+/*
+  Placeholder for analyzing a pair (q,r) of neurons in the same layer.
+  Later this will compute conditional intervals and determine whether
+  a dependency (forbidden combination) exists.
+*/
+bool DependencyAnalyzer::analyzePairConflict( unsigned layer,
+                                              unsigned q, unsigned r,
+                                              Dependency &outDependency )
+{
+    (void)layer;
+    (void)q;
+    (void)r;
+    (void)outDependency;
+
+    // TODO: implement the mathematical analysis for size-2 dependencies.
+    printf("[DA] analyzePairConflict(%u, %u, %u) -- not yet implemented\n", layer, q, r);
+    return false; // No dependency detected (placeholder)
+}
+
+/*
+  Placeholder for recording a dependency in the internal storage.
+  Later this will insert into the per-layer dependency set/map,
+  handling canonicalization and duplicate detection.
+*/
+bool DependencyAnalyzer::recordConflict( Dependency d )
+{
+    (void)d;
+
+    // TODO: implement dependency insertion and deduplication.
+    printf("[DA] recordConflict() -- not yet implemented\n");
+    return false; // Return true if newly inserted (placeholder)
+}
+
+
+
 
 
 

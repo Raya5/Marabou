@@ -23,6 +23,8 @@
 #include "InputQuery.h"
 #include "Query.h"
 #include "NetworkLevelReasoner.h"
+#include "Layer.h"
+#include "Dependency.h"
 
 // #include <memory>
 
@@ -66,6 +68,41 @@ public:
       Returns how many bounds got tightened.
     */
     unsigned runBoundTightening();
+
+    /*
+      Gather unstable neurons of the given weighted-sum layer from NLR pre-activation bounds
+    */
+    void collectUnstableNeurons( unsigned layerIndex, std::vector<unsigned> &unstableNeurons ) const;
+
+    /*
+      Compute size-2 dependencies (as conflicts) for a given WEIGHTED_SUM layer index.
+      Returns number of newly recorded conflicts.
+    */
+    unsigned computeSameLayerDependencies( unsigned weightedSumLayerIndex );
+
+    /*
+      Test a single pair (q,r) and record a conflict if one is found. Returns true iff a new conflict was added.
+    */
+    bool detectAndRecordPairConflict(unsigned layerIndex,
+                                 unsigned neuronA, unsigned neuronB);
+
+    /*
+      Analyze whether neurons q and r in the same layer form a dependency
+      (forbidden ReLU state combination). If found, populate outDependency.
+
+      Returns true if a dependency was detected, false otherwise.
+    */
+    bool analyzePairConflict( unsigned layer,
+                              unsigned q, unsigned r,
+                              Dependency &outDependency );
+
+    /*
+      Record a discovered dependency in the internal storage for its layer.
+      Handles canonicalization and avoids duplicates.
+
+      Returns true if the dependency was newly inserted.
+    */
+    bool recordConflict( Dependency d );
 
     /**************** For Debugging ********************/
 
