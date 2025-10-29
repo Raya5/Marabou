@@ -237,18 +237,98 @@ bool DependencyAnalyzer::detectAndRecordPairConflict(unsigned layerIndex,
   Later this will compute conditional intervals and determine whether
   a dependency (forbidden combination) exists.
 */
-bool DependencyAnalyzer::analyzePairConflict( unsigned layer,
+bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
                                               unsigned q, unsigned r,
                                               Dependency &outDependency )
 {
-    (void)layer;
-    (void)q;
-    (void)r;
-    (void)outDependency;
+    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
+    ASSERT( weightedSumLayer );
+    ASSERT( weightedSumLayer->getLayerType() == NLR::Layer::WEIGHTED_SUM );
 
-    // TODO: implement the mathematical analysis for size-2 dependencies.
-    printf("[DA] analyzePairConflict(%u, %u, %u) -- not yet implemented\n", layer, q, r);
-    return false; // No dependency detected (placeholder)
+    const unsigned layerSize = weightedSumLayer->getSize();
+    ASSERT( q < layerSize && r < layerSize );
+    ASSERT( q < r );
+    (void) layerSize;
+
+    const auto &sources = weightedSumLayer->getSourceLayers();
+    ASSERT( sources.size() == 1 );
+    const unsigned prevLayerIndex = sources.begin()->first;
+    const NLR::Layer *prevLayer = _networkLevelReasoner->getLayer( prevLayerIndex );
+    ASSERT( prevLayer );
+    const unsigned prevSize = prevLayer->getSize();
+
+    Vector<double> w_q( prevSize ), w_r( prevSize );
+    for ( unsigned j = 0; j < prevSize; ++j )
+    {
+        w_q[j] = weightedSumLayer->getWeight( prevLayerIndex, j, q );
+        w_r[j] = weightedSumLayer->getWeight( prevLayerIndex, j, r );
+    }
+    const double b_q = weightedSumLayer->getBias( q );
+    const double b_r = weightedSumLayer->getBias( r );
+    
+    Vector<double> lowerPrev, upperPrev;
+    _getLayerBounds( prevLayer, lowerPrev, upperPrev );
+    
+    
+    double l_q_r0, u_q_r0, l_r_q0, u_r_q0;
+
+    _sliceMinMax_givenOtherZero( w_q, b_q, w_r, b_r, lowerPrev, upperPrev, l_q_r0, u_q_r0 );
+    _sliceMinMax_givenOtherZero( w_r, b_r, w_q, b_q, lowerPrev, upperPrev, l_r_q0, u_r_q0 );
+
+    /**************** For Debugging ********************/
+    unsigned countTrue = 0;
+    if ( FloatUtils::gt( l_q_r0, 0.0 ) ) ++countTrue;
+    if ( FloatUtils::lt( u_q_r0, 0.0 ) ) ++countTrue;
+    if ( FloatUtils::gt( l_r_q0, 0.0 ) ) ++countTrue;
+    if ( FloatUtils::lt( u_r_q0, 0.0 ) ) ++countTrue;
+
+    if ( countTrue > 0 ){
+    printf( "[DA][pair %u,%u] >0(l_q_r0)=%d  <0(u_q_r0)=%d  >0(l_r_q0)=%d  <0(u_r_q0)=%d  totalTrue=%u\n",
+            q, r,
+            FloatUtils::gt( l_q_r0, 0.0 ),
+            FloatUtils::lt( u_q_r0, 0.0 ),
+            FloatUtils::gt( l_r_q0, 0.0 ),
+            FloatUtils::lt( u_r_q0, 0.0 ),
+            countTrue );}
+    /**************** End of Debugging ********************/
+    // Booleans for strict tests
+    const bool q_forced_active   = FloatUtils::gt( l_q_r0, 0.0 );
+    const bool q_forced_inactive = FloatUtils::lt( u_q_r0, 0.0 );
+    const bool r_forced_active   = FloatUtils::gt( l_r_q0, 0.0 );
+    const bool r_forced_inactive = FloatUtils::lt( u_r_q0, 0.0 );
+
+    // Determine which forbidden pair applies
+    if ( q_forced_inactive && r_forced_inactive )
+    {
+        // u_q|r0 < 0 and u_r|q0 < 0  ⇒ forbid (q=Active, r=Active)
+        outDependency = Dependency::Pair( layerIndex, q, r,
+                                        ReLUState::Active, ReLUState::Active );
+    }
+    else if ( q_forced_active && r_forced_active )
+    {
+        // l_q|r0 > 0 and l_r|q0 > 0  ⇒ forbid (q=Inactive, r=Inactive)
+        outDependency = Dependency::Pair( layerIndex, q, r,
+                                        ReLUState::Inactive, ReLUState::Inactive );
+    }
+    else if ( q_forced_inactive && r_forced_active )
+    {
+        // u_q|r0 < 0 and l_r|q0 > 0  ⇒ forbid (q=Active, r=Inactive)
+        outDependency = Dependency::Pair( layerIndex, q, r,
+                                        ReLUState::Active, ReLUState::Inactive );
+    }
+    else if ( q_forced_active && r_forced_inactive )
+    {
+        // l_q|r0 > 0 and u_r|q0 < 0  ⇒ forbid (q=Inactive, r=Active)
+        outDependency = Dependency::Pair( layerIndex, q, r,
+                                        ReLUState::Inactive, ReLUState::Active );
+    }
+    else
+    {
+        return false; // no dependency found
+    }
+
+    return true; // dependency found and written to outDependency
+
 }
 
 /*
@@ -264,6 +344,89 @@ bool DependencyAnalyzer::recordConflict( Dependency d )
     printf("[DA] recordConflict() -- not yet implemented\n");
     return false; // Return true if newly inserted (placeholder)
 }
+
+void DependencyAnalyzer::_getLayerBounds( const NLR::Layer *layer,
+                                          Vector<double> &lowerBounds,
+                                          Vector<double> &upperBounds ) const
+{
+    Vector<double> L, U;
+    const unsigned n = layer->getSize();
+    for ( unsigned i = 0; i < n; ++i )
+    {
+        L.append( layer->getLb( i ) );
+        U.append( layer->getUb( i ) );
+    }
+    lowerBounds = L;   // assign into caller-provided containers
+    upperBounds = U;
+}
+
+unsigned DependencyAnalyzer::_argmaxAbsNonzero( const Vector<double> &w ) const
+{
+    ASSERT( w.size() > 0 );
+    unsigned k = 0;
+    double best = 0.0;
+    for ( unsigned j = 0; j < w.size(); ++j )
+    {
+        double a = std::fabs( w[j] );
+        if ( FloatUtils::isZero( a ) ) continue;
+        if ( a > best ) { best = a; k = j; }
+    }
+    ASSERT( !FloatUtils::isZero( best ) ); // must have a nonzero pivot
+    return k;
+}
+
+void DependencyAnalyzer::_boxMinMax( const Vector<double> &a, double b,
+                                     const Vector<double> &L, const Vector<double> &U,
+                                     double &outMin, double &outMax ) const
+{
+    ASSERT( a.size() == L.size() && a.size() == U.size() );
+    double mn = b, mx = b;
+    for ( unsigned j = 0; j < a.size(); ++j )
+    {
+        double aj = a[j];
+        if ( aj >= 0 ) { mn += aj * L[j]; mx += aj * U[j]; }
+        else           { mn += aj * U[j]; mx += aj * L[j]; }
+    }
+    outMin = mn; outMax = mx;
+}
+
+void DependencyAnalyzer::_sliceMinMax_givenOtherZero( const Vector<double> &w_t, double b_t,
+                                                      const Vector<double> &w_o, double b_o,
+                                                      const Vector<double> &L, const Vector<double> &U,
+                                                      double &outMin, double &outMax ) const
+{
+    ASSERT( w_t.size() == w_o.size() && w_t.size() == L.size() && L.size() == U.size() );
+
+    // pivot on largest-magnitude nonzero in w_o
+    const unsigned k = _argmaxAbsNonzero( w_o );
+    const double denom = w_o[k];
+    ASSERT( !FloatUtils::isZero( denom ) );
+
+    // eliminate x_k using w_o·x + b_o = 0  =>  x_k = -(b_o + sum_{j!=k} w_o[j] x_j) / w_o[k]
+    // substitute into w_t·x + b_t  ==>  new affine in remaining variables: a·x + b
+    Vector<double> a; 
+    double b = b_t;
+
+    for ( unsigned j = 0; j < w_t.size(); ++j )
+    {
+        if ( j == k ) continue;
+        // coefficient of x_j after substitution:
+        // w_t[j] + w_t[k] * ( w_o[j] / (-w_o[k]) ) = w_t[j] - w_t[k] * (w_o[j]/w_o[k])
+        double coeff = w_t[j] - ( w_t[k] * ( w_o[j] / denom ) );
+        a.append( coeff );
+    }
+    // constant term adds: w_t[k] * ( b_o / denom ) with a minus sign (since x_k = -(b_o + ...)/w_o[k])
+    b = b_t - ( w_t[k] * ( b_o / denom ) );
+
+    // Build reduced box (drop coordinate k)
+    Vector<double> Lr, Ur;
+    for ( unsigned j = 0; j < L.size(); ++j )
+        if ( j != k ) { Lr.append( L[j] ); Ur.append( U[j] ); }
+
+    // Box min/max on reduced form
+    _boxMinMax( a, b, Lr, Ur, outMin, outMax );
+}
+
 
 
 

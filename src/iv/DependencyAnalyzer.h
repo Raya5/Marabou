@@ -92,7 +92,7 @@ public:
 
       Returns true if a dependency was detected, false otherwise.
     */
-    bool analyzePairConflict( unsigned layer,
+    bool analyzePairConflict( unsigned layerIndex,
                               unsigned q, unsigned r,
                               Dependency &outDependency );
 
@@ -103,6 +103,35 @@ public:
       Returns true if the dependency was newly inserted.
     */
     bool recordConflict( Dependency d );
+
+    /*
+      Extract per-neuron lower and upper bounds from the given layer.
+    */
+    void _getLayerBounds( const NLR::Layer *layer,
+                          Vector<double> &lowerBounds,
+                          Vector<double> &upperBounds ) const;
+                          
+    /*
+      Return index of largest-magnitude nonzero entry in w (ASSERT if all zero).
+    */
+    unsigned _argmaxAbsNonzero( const Vector<double> &w ) const;
+
+    /*
+      Compute min/max of target (w_t·x + b_t) subject to box L<=x<=U and equality (w_o·x + b_o = 0).
+      Uses a single-variable elimination with argmax-abs pivot from w_o.
+    */
+    void _sliceMinMax_givenOtherZero( const Vector<double> &w_target, double b_target,
+                                      const Vector<double> &w_other,  double b_other,
+                                      const Vector<double> &L, const Vector<double> &U,
+                                      double &outMin, double &outMax ) const;
+
+    /*
+      Interval extrema over a box for affine form a·x + b (no equalities).
+    */
+    void _boxMinMax( const Vector<double> &a, double b,
+                    const Vector<double> &L, const Vector<double> &U,
+                    double &outMin, double &outMax ) const;
+
 
     /**************** For Debugging ********************/
 
