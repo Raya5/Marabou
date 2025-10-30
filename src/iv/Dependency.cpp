@@ -10,53 +10,44 @@
 
 #include "Dependency.h"
 #include <functional>
+// #include <algorithm>
 
 Dependency::Dependency()
-    : _layer( 0 )
 {
 }
 
-Dependency::Dependency( unsigned layer,
-                        const std::vector<unsigned> &indices,
+Dependency::Dependency( const std::vector<unsigned> &vars,
                         const std::vector<ReLUState> &states )
-    : _layer( layer )
-    , _indices( indices )
+    : _vars( vars )
     , _states( states )
 {
     canonicalize();
 }
 
-Dependency Dependency::Pair( unsigned layer,
-                             unsigned a, unsigned b,
-                             ReLUState aState, ReLUState bState )
+Dependency Dependency::Pair( unsigned varA, unsigned varB,
+                             ReLUState stateA, ReLUState stateB )
 {
-    std::vector<unsigned> indices = { a, b };
-    std::vector<ReLUState> states = { aState, bState };
-    return Dependency( layer, indices, states );
+    std::vector<unsigned> vars   = { varA, varB };
+    std::vector<ReLUState> states = { stateA, stateB };
+    return Dependency( vars, states );
 }
 
-Dependency Dependency::Triple( unsigned layer,
-                               unsigned a, unsigned b, unsigned c,
-                               ReLUState aState, ReLUState bState, ReLUState cState )
+Dependency Dependency::Triple( unsigned varA, unsigned varB, unsigned varC,
+                               ReLUState stateA, ReLUState stateB, ReLUState stateC )
 {
-    std::vector<unsigned> indices = { a, b, c };
-    std::vector<ReLUState> states = { aState, bState, cState };
-    return Dependency( layer, indices, states );
-}
-
-unsigned Dependency::getLayer() const
-{
-    return _layer;
+    std::vector<unsigned> vars   = { varA, varB, varC };
+    std::vector<ReLUState> states = { stateA, stateB, stateC };
+    return Dependency( vars, states );
 }
 
 size_t Dependency::size() const
 {
-    return _indices.size();
+    return _vars.size();
 }
 
-const std::vector<unsigned> &Dependency::getIndices() const
+const std::vector<unsigned> &Dependency::getVars() const
 {
-    return _indices;
+    return _vars;
 }
 
 const std::vector<ReLUState> &Dependency::getStates() const
@@ -66,60 +57,61 @@ const std::vector<ReLUState> &Dependency::getStates() const
 
 bool Dependency::isPair() const
 {
-    return _indices.size() == 2;
+    return _vars.size() == 2;
 }
 
 bool Dependency::isTriple() const
 {
-    return _indices.size() == 3;
+    return _vars.size() == 3;
 }
 
-bool Dependency::contains( unsigned neuron ) const
+bool Dependency::contains( unsigned var ) const
 {
-    return std::find( _indices.begin(), _indices.end(), neuron ) != _indices.end();
+    return std::find( _vars.begin(), _vars.end(), var ) != _vars.end();
 }
 
 bool Dependency::operator==( const Dependency &other ) const
 {
-    return _layer == other._layer &&
-           _indices == other._indices &&
-           _states == other._states;
+    return _vars == other._vars && _states == other._states;
 }
 
 size_t Dependency::Hasher::operator()( const Dependency &d ) const
 {
-    size_t h = std::hash<unsigned>()( d._layer );
-    for ( size_t i = 0; i < d._indices.size(); ++i )
+    size_t h = 0;
+    for ( size_t i = 0; i < d._vars.size(); ++i )
     {
-        h ^= std::hash<unsigned>()( d._indices[i] + 0x9e3779b9 + (h << 6) + (h >> 2) );
-        h ^= std::hash<uint8_t>()( static_cast<uint8_t>( d._states[i] ) + (h << 5) );
+        // Combine variable ID and state into hash
+        h ^= std::hash<unsigned>()( d._vars[i] )
+             + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+        h ^= std::hash<uint8_t>()( static_cast<uint8_t>( d._states[i] ) )
+             + 0x9e3779b97f4a7c15ULL + (h << 5) + (h >> 2);
     }
     return h;
 }
 
 void Dependency::canonicalize()
 {
-    if ( _indices.size() != _states.size() )
+    if ( _vars.size() != _states.size() )
         return;
 
-    std::vector<size_t> order( _indices.size() );
+    std::vector<size_t> order( _vars.size() );
     for ( size_t i = 0; i < order.size(); ++i )
         order[i] = i;
 
     std::sort( order.begin(), order.end(),
-               [&]( size_t a, size_t b ) { return _indices[a] < _indices[b]; } );
+               [&]( size_t a, size_t b ) { return _vars[a] < _vars[b]; } );
 
-    std::vector<unsigned> sortedIndices;
+    std::vector<unsigned> sortedVars;
     std::vector<ReLUState> sortedStates;
-    sortedIndices.reserve( _indices.size() );
+    sortedVars.reserve( _vars.size() );
     sortedStates.reserve( _states.size() );
 
     for ( size_t k : order )
     {
-        sortedIndices.push_back( _indices[k] );
+        sortedVars.push_back( _vars[k] );
         sortedStates.push_back( _states[k] );
     }
 
-    _indices.swap( sortedIndices );
+    _vars.swap( sortedVars );
     _states.swap( sortedStates );
 }

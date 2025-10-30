@@ -257,70 +257,81 @@ bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
     ASSERT( prevLayer );
     const unsigned prevSize = prevLayer->getSize();
 
+    // === Collect weight rows and biases ===
     Vector<double> w_q( prevSize ), w_r( prevSize );
     for ( unsigned j = 0; j < prevSize; ++j )
     {
         w_q[j] = weightedSumLayer->getWeight( prevLayerIndex, j, q );
         w_r[j] = weightedSumLayer->getWeight( prevLayerIndex, j, r );
     }
+
     const double b_q = weightedSumLayer->getBias( q );
     const double b_r = weightedSumLayer->getBias( r );
-    
+
     Vector<double> lowerPrev, upperPrev;
     _getLayerBounds( prevLayer, lowerPrev, upperPrev );
-    
-    
-    double l_q_r0, u_q_r0, l_r_q0, u_r_q0;
 
+    // === Compute conditional bounds ===
+    double l_q_r0, u_q_r0, l_r_q0, u_r_q0;
     _sliceMinMax_givenOtherZero( w_q, b_q, w_r, b_r, lowerPrev, upperPrev, l_q_r0, u_q_r0 );
     _sliceMinMax_givenOtherZero( w_r, b_r, w_q, b_q, lowerPrev, upperPrev, l_r_q0, u_r_q0 );
 
-    /**************** For Debugging ********************/
+    // === Debug info ===
     unsigned countTrue = 0;
     if ( FloatUtils::gt( l_q_r0, 0.0 ) ) ++countTrue;
     if ( FloatUtils::lt( u_q_r0, 0.0 ) ) ++countTrue;
     if ( FloatUtils::gt( l_r_q0, 0.0 ) ) ++countTrue;
     if ( FloatUtils::lt( u_r_q0, 0.0 ) ) ++countTrue;
 
-    if ( countTrue > 0 ){
-    printf( "[DA][pair %u,%u] >0(l_q_r0)=%d  <0(u_q_r0)=%d  >0(l_r_q0)=%d  <0(u_r_q0)=%d  totalTrue=%u\n",
-            q, r,
-            FloatUtils::gt( l_q_r0, 0.0 ),
-            FloatUtils::lt( u_q_r0, 0.0 ),
-            FloatUtils::gt( l_r_q0, 0.0 ),
-            FloatUtils::lt( u_r_q0, 0.0 ),
-            countTrue );}
-    /**************** End of Debugging ********************/
-    // Booleans for strict tests
+    if ( countTrue > 0 )
+    {
+        unsigned varQ = weightedSumLayer->neuronToVariable( q );
+        unsigned varR = weightedSumLayer->neuronToVariable( r );
+
+        printf("[DA][pair %u,%u] (vars %u,%u) >0(l_q_r0)=%d  <0(u_q_r0)=%d  "
+               ">0(l_r_q0)=%d  <0(u_r_q0)=%d  totalTrue=%u\n",
+               q, r, varQ, varR,
+               FloatUtils::gt( l_q_r0, 0.0 ),
+               FloatUtils::lt( u_q_r0, 0.0 ),
+               FloatUtils::gt( l_r_q0, 0.0 ),
+               FloatUtils::lt( u_r_q0, 0.0 ),
+               countTrue );
+    }
+    // === End of Debug info ===
+
+    // === Boolean classification ===
     const bool q_forced_active   = FloatUtils::gt( l_q_r0, 0.0 );
     const bool q_forced_inactive = FloatUtils::lt( u_q_r0, 0.0 );
     const bool r_forced_active   = FloatUtils::gt( l_r_q0, 0.0 );
     const bool r_forced_inactive = FloatUtils::lt( u_r_q0, 0.0 );
 
-    // Determine which forbidden pair applies
+    unsigned varQ = weightedSumLayer->neuronToVariable( q );
+    unsigned varR = weightedSumLayer->neuronToVariable( r );
+
+    // === Create forbidden combination (dependency) ===
     if ( q_forced_inactive && r_forced_inactive )
     {
-        // u_q|r0 < 0 and u_r|q0 < 0  ⇒ forbid (q=Active, r=Active)
-        outDependency = Dependency::Pair( layerIndex, q, r,
-                                        ReLUState::Active, ReLUState::Active );
+        // u_q|r0 < 0 and u_r|q0 < 0 ⇒ forbid (q=Active, r=Active)
+        outDependency = Dependency::Pair( varQ, varR,
+                                          ReLUState::Active, ReLUState::Active );
     }
     else if ( q_forced_active && r_forced_active )
     {
-        // l_q|r0 > 0 and l_r|q0 > 0  ⇒ forbid (q=Inactive, r=Inactive)
-        outDependency = Dependency::Pair( layerIndex, q, r,
-                                        ReLUState::Inactive, ReLUState::Inactive );
+        // l_q|r0 > 0 and l_r|q0 > 0 ⇒ forbid (q=Inactive, r=Inactive)
+        outDependency = Dependency::Pair( varQ, varR,
+                                          ReLUState::Inactive, ReLUState::Inactive );
     }
     else if ( q_forced_inactive && r_forced_active )
     {
-        // u_q|r0 < 0 and l_r|q0 > 0  ⇒ forbid (q=Active, r=Inactive)
-        outDependency = Dependency::Pair( layerIndex, q, r,
-                                        ReLUState::Active, ReLUState::Inactive );
+        // u_q|r0 < 0 and l_r|q0 > 0 ⇒ forbid (q=Active, r=Inactive)
+        outDependency = Dependency::Pair( varQ, varR,
+                                          ReLUState::Active, ReLUState::Inactive );
     }
     else if ( q_forced_active && r_forced_inactive )
     {
-        // l_q|r0 > 0 and u_r|q0 < 0  ⇒ forbid (q=Inactive, r=Active)
-        outDependency = Dependency::Pair( layerIndex, q, r,
-                                        ReLUState::Inactive, ReLUState::Active );
+        // l_q|r0 > 0 and u_r|q0 < 0 ⇒ forbid (q=Inactive, r=Active)
+        outDependency = Dependency::Pair( varQ, varR,
+                                          ReLUState::Inactive, ReLUState::Active );
     }
     else
     {
@@ -328,7 +339,6 @@ bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
     }
 
     return true; // dependency found and written to outDependency
-
 }
 
 /*
