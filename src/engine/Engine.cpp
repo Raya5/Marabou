@@ -311,10 +311,7 @@ bool Engine::solve( double timeoutInSeconds )
             if ( splitJustPerformed )
             {
                 performBoundTighteningAfterCaseSplit();
-                printf("*****************\n");
-                _dependencyManager.printTestMessage();
-                _dependencyManager.testPassBoundManager( &_boundManager );
-                printf("*****************\n");
+                printf("********* Starting IV *********");
                 // call dependency analysis
                 informLPSolverOfBounds();
                 splitJustPerformed = false;
