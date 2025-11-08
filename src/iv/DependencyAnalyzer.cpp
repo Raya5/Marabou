@@ -283,7 +283,7 @@ bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
     if ( FloatUtils::gt( l_r_q0, 0.0 ) ) ++countTrue;
     if ( FloatUtils::lt( u_r_q0, 0.0 ) ) ++countTrue;
 
-    if ( countTrue > 0 )
+    if ( countTrue > 1 )
     {
         unsigned varQ = weightedSumLayer->neuronToVariable( q );
         unsigned varR = weightedSumLayer->neuronToVariable( r );
@@ -348,11 +348,69 @@ bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
 */
 bool DependencyAnalyzer::recordConflict( Dependency d )
 {
-    (void)d;
+    // --- Basic sanity checks ---
+    ASSERT( d.size() >= 2 );
+    ASSERT( d.getVars().size() == d.getStates().size() );
+    
+    // --- Get vars and states separately ---
+    const std::vector<unsigned> &vars   = d.getVars();
+    const std::vector<ReLUState> &states = d.getStates();
+    
+    // --- Canonical ordering sanity check ---
+    for ( size_t i = 1; i < vars.size(); ++i )
+        ASSERT( vars[i - 1] < vars[i] );  // must be strictly ascending
 
-    // TODO: implement dependency insertion and deduplication.
-    printf("[DA] recordConflict() -- not yet implemented\n");
-    return false; // Return true if newly inserted (placeholder)
+    // --- Debug-only duplicate assertion ---
+    auto it = _dependencyIndex.find( d );
+    ASSERT( it == _dependencyIndex.end() );  // should not already exist
+    // --- End Debug-only duplicate assertion ---
+
+    // --- Allocate stable id and store the value object ---
+    const DependencyState::DependencyId id = _dependencies.size();
+    _dependencies.push_back( d );
+
+    // --- Create parallel runtime state (all Unstable), index-aligned with d.getVars() ---
+    DependencyState st( id, static_cast<unsigned>( d.size() ) );
+    _dependencyStates.push_back( std::move( st ) );
+    ASSERT( _dependencyStates.size() == _dependencies.size() );
+
+
+    /**************** For Debugging ********************/
+    printf("[DA] Added DependencyState id=%u, size=%u | total now=%zu\n",
+        id,
+        static_cast<unsigned>( d.size() ),
+        _dependencyStates.size() );
+
+    for ( unsigned i = 0; i < _dependencyStates.size(); ++i )
+    {
+        const auto &st = _dependencyStates[i];
+        printf("   [%u] depId=%u  literals=%u\n",
+            i, st.getDepId(), st.size() );
+    }
+    /**************** End For Debugging ********************/
+
+    // Track for future duplicate ASSERTs
+    _dependencyIndex.emplace( d, id );
+
+
+    // --- Register watches for each literal ---
+    for ( unsigned i = 0; i < vars.size(); ++i )
+    {
+        const unsigned v = vars[i];
+        const ReLUState s = states[i];
+
+        // Choose bucket by polarity
+        auto &bucket = ( s == ReLUState::Active ) ? _watchActive[v] : _watchInactive[v];
+
+        // Debug Sanity: no duplicate ids in the same bucket
+        for ( unsigned k = 0; k < bucket.size(); ++k )
+        ASSERT( bucket[k] != id );
+        // End Debug Sanity: no duplicate ids in the same bucket
+
+        bucket.append( id );
+    }
+
+    return true; // Return true if newly inserted 
 }
 
 void DependencyAnalyzer::_getLayerBounds( const NLR::Layer *layer,

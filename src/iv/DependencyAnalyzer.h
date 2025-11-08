@@ -25,6 +25,8 @@
 #include "NetworkLevelReasoner.h"
 #include "Layer.h"
 #include "Dependency.h"
+#include "DependencyState.h"
+
 
 // #include <memory>
 
@@ -159,6 +161,23 @@ private:
       Cached raw pointer to the NLR owned by _preprocessedQuery.
     */
     NLR::NetworkLevelReasoner *_networkLevelReasoner;
+
+    // ---- Dependency storage & runtime ----
+
+    std::vector<Dependency> _dependencies;         // flat store; id = index
+    std::vector<DependencyState> _dependencyStates; // runtime, parallel to _dependencies
+
+    // ---- Watches: var -> deps containing that var with the given state ----
+    std::unordered_map<unsigned, Vector<DependencyState::DependencyId>> _watchActive;    // Dependencies containing (var, Active)
+    std::unordered_map<unsigned, Vector<DependencyState::DependencyId>> _watchInactive;  // Dependencies containing (var, Inactive)
+
+    /*
+      Debug-only dependency index for duplicate assertion.
+      Maps each Dependency (value-based) to its index in _dependencies.
+      Used to ensure no duplicate insertions during recordConflict().
+    */
+    std::unordered_map<Dependency, DependencyState::DependencyId, Dependency::Hasher> _dependencyIndex;
+
 
 };
 
