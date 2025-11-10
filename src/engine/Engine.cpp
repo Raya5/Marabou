@@ -32,7 +32,6 @@
 #include "TimeUtils.h"
 #include "VariableOutOfBoundDuringOptimizationException.h"
 #include "Vector.h"
-#include "DependencyManager.h"
 // --- incremental ---
 #include "DependencyAnalyzer.h"
 
@@ -62,7 +61,6 @@ Engine::Engine()
     , _symbolicBoundTighteningType( Options::get()->getSymbolicBoundTighteningType() )
     , _solveWithMILP( Options::get()->getBool( Options::SOLVE_WITH_MILP ) )
     , _lpSolverType( Options::get()->getLPSolverType() )
-    , _dependencyManager( _boundManager )
     , _gurobi( nullptr )
     , _milpEncoder( nullptr )
     , _soiManager( nullptr )
@@ -1422,7 +1420,6 @@ void Engine::initializeNetworkLevelReasoning()
             _networkLevelReasoner->dumpTopology( false );
             std::cout << std::endl;
         }
-        _dependencyManager.registerNetworkLevelReasoner(_networkLevelReasoner);
     }
 }
 
@@ -2131,8 +2128,6 @@ void Engine::applySplit( const PiecewiseLinearCaseSplit &split )
 
     if ( _produceUNSATProofs && _UNSATCertificateCurrentPointer )
         ( **_UNSATCertificateCurrentPointer ).setVisited();
-
-    _dependencyManager.logCurrentBounds();
 
     DEBUG( _tableau->verifyInvariants() );
     ENGINE_LOG( "Done with split\n" );

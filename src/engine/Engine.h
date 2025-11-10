@@ -49,7 +49,6 @@
 #include "SumOfInfeasibilitiesManager.h"
 #include "SymbolicBoundTighteningType.h"
 #include "UnsatCertificateNode.h"
-#include "DependencyManager.h"
 
 #include <atomic>
 #include <context/context.h>
@@ -514,11 +513,6 @@ private:
       The solver to solve the LP during the complete search.
     */
     LPSolverType _lpSolverType;
-
-    /*
-      Manager dependencies.
-    */
-    DependencyManager _dependencyManager;
 
     /*
       GurobiWrapper object
