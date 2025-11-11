@@ -361,8 +361,7 @@ bool DependencyAnalyzer::recordConflict( Dependency d )
         ASSERT( vars[i - 1] < vars[i] );  // must be strictly ascending
 
     // --- Debug-only duplicate assertion ---
-    auto it = _dependencyIndex.find( d );
-    ASSERT( it == _dependencyIndex.end() );  // should not already exist
+    ASSERT( _dependencyIndex.find( d ) == _dependencyIndex.end() );  // should not already exist
     // --- End Debug-only duplicate assertion ---
 
     // --- Allocate stable id and store the value object ---
@@ -493,6 +492,97 @@ void DependencyAnalyzer::_sliceMinMax_givenOtherZero( const Vector<double> &w_t,
 
     // Box min/max on reduced form
     _boxMinMax( a, b, Lr, Ur, outMin, outMax );
+}
+
+bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
+{
+    // Map ReLUState -> runtime state enum
+    const ReLURuntimeState incoming =
+        ( state == ReLUState::Active ) ? ReLURuntimeState::Active
+                                       : ReLURuntimeState::Inactive;
+
+    // Insert-or-get slot; default-initialized to Unstable (enum underlying 0)
+    ReLURuntimeState &slot = _seenPhase[var];
+
+    // We do not expect duplicate notifications or contradictions.
+    // If this fires, the caller notified twice or changed its mind without backtracking.
+    ASSERT( slot == ReLURuntimeState::Unstable );
+
+    // Mark as seen/fixed
+    slot = incoming;
+
+    // Pick the watched bucket (don’t create if missing)
+    const auto &watchMap = ( state == ReLUState::Active ) ? _watchActive : _watchInactive;
+    auto it = watchMap.find( var );
+    if ( it == watchMap.end() )
+    {
+        // No dependencies watch this literal — nothing to do
+        return false;
+    }
+    // IDs of dependencies that contain literal (var, state)
+    const Vector<DependencyState::DependencyId> &depIds = it->second;
+    bool foundDep = false;
+
+    // Update runtime states for all dependencies watching (var, state)
+    for ( unsigned t = 0; t < depIds.size(); ++t )
+    {
+        const DependencyState::DependencyId depId = depIds[t];
+        ASSERT( depId < _dependencies.size() && depId < _dependencyStates.size() );
+
+        const Dependency &dep = _dependencies[ depId ];
+        DependencyState  &depState  = _dependencyStates[ depId ];
+
+        // Find aligned index i s.t. dep.getVars()[i] == var
+        const std::vector<unsigned>   &vars   = dep.getVars();
+        // const std::vector<ReLUState>  &literalPhases = dep.getStates();  // polarity of the nogood (not used here)
+
+        int idx = -1;
+        for ( unsigned i = 0; i < vars.size(); ++i )
+            if ( vars[i] == var ) { idx = i; break; }
+
+        // Sanity: the var must be present (because it’s in the watch list)
+        ASSERT( idx >= 0 );
+
+        // Sanity: we should be transitioning from Unstable → {Active/Inactive}
+        ASSERT( depState.getCurrent()[idx] == ReLURuntimeState::Unstable );
+
+        // Apply the observed runtime state
+        depState.getCurrent()[idx] =
+            ( state == ReLUState::Active ) ? ReLURuntimeState::Active
+                                        : ReLURuntimeState::Inactive;
+
+        if ( depState.checkImplication( dep ) ){
+            _activeDepIds.append(depId);
+            foundDep = true;
+        }
+    }
+    if ( foundDep )
+        ASSERT("Found!!")
+    return foundDep;
+}
+
+void DependencyAnalyzer::notifyLowerBoundUpdate( unsigned variable,
+                                                 double previousLowerBound,
+                                                 double newLowerBound )
+{
+    // Lower bounds must only move up (monotone tightening)
+    ASSERT( !FloatUtils::lt( newLowerBound, previousLowerBound ) );
+
+    // Detect transition to guaranteed Active
+    if ( previousLowerBound <= 0.0 && newLowerBound > 0.0 )
+        notifyNeuronFixed( variable, ReLUState::Active );
+}
+
+void DependencyAnalyzer::notifyUpperBoundUpdate( unsigned variable,
+                                                 double previousUpperBound,
+                                                 double newUpperBound )
+{
+    // Upper bounds must only move down (monotone tightening)
+    ASSERT( !FloatUtils::gt( newUpperBound, previousUpperBound ) );
+
+    // Detect transition to guaranteed Inactive
+    if ( previousUpperBound >= 0.0 && newUpperBound < 0.0 )
+        notifyNeuronFixed( variable, ReLUState::Inactive );
 }
 
 

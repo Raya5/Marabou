@@ -9,9 +9,11 @@
 **/
 
 #include "DependencyState.h"
+#include "Debug.h"                  // for ASSERT
 
 DependencyState::DependencyState()
     : _depId( (unsigned)-1 )
+    , _hasImplication(false)
 {
 }
 
@@ -39,4 +41,53 @@ const Vector<ReLURuntimeState> &DependencyState::getCurrent() const
 Vector<ReLURuntimeState> &DependencyState::getCurrent()
 {
     return _current;
+}
+
+static inline ReLUState negatePhase( ReLUState s )
+{
+    return ( s == ReLUState::Active ) ? ReLUState::Inactive : ReLUState::Active;
+}
+
+bool DependencyState::checkImplication( const Dependency &dep) 
+{
+    // 2) One-away check
+    const auto &vars   = dep.getVars();
+    const auto &phases = dep.getStates();
+    ASSERT( vars.size() == phases.size() );
+    ASSERT( vars.size() == _current.size() );
+
+    unsigned matched = 0, contradicted = 0, unset = 0;
+    int lastUnsetIdx = -1;
+
+    for ( unsigned i = 0; i < vars.size(); ++i )
+    {
+        const auto rt = _current[i];
+        if ( rt == ReLURuntimeState::Unstable ) { ++unset; lastUnsetIdx = i; continue; }
+
+        const ReLUState rtAsPhase =
+            ( rt == ReLURuntimeState::Active ) ? ReLUState::Active : ReLUState::Inactive;
+
+        if ( rtAsPhase == phases[i] ) ++matched;
+        else                          ++contradicted;
+    }
+
+    ASSERT( matched + contradicted + unset == dep.size() );
+
+    if ( contradicted == 0 && unset == 1 )
+    {
+        _hasImplication = true;
+        _impVar   = vars[lastUnsetIdx];
+        _impPhase = negatePhase( phases[lastUnsetIdx] ); // opposite to nogood polarity
+        return true;
+    }
+
+    return false;
+}
+
+bool DependencyState::hasImplication() const { return _hasImplication; }
+
+void DependencyState::getImplication( unsigned &var, ReLUState &phase ) const
+{
+    ASSERT( _hasImplication );
+    var = _impVar; phase = _impPhase;
 }

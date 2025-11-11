@@ -21,6 +21,7 @@
 #define __DependencyState_h__
 
 #include "Vector.h"
+#include "Dependency.h"
 // #include <cstdint>
 
 /*
@@ -66,9 +67,29 @@ public:
     const Vector<ReLURuntimeState> &getCurrent() const;
     Vector<ReLURuntimeState> &getCurrent();
 
+    /*
+      Check whether this dependency is now "one-away" given the current runtime
+      phases in `current`. If so, return true and output the single implied
+      (var, phase) that must be forced to avoid violating the nogood.
+
+      Returns:
+        - true  => exactly one literal is still Unstable, all others are fixed,
+                  none contradicts the nogood; (outVar, outPhase) is set to
+                  the forced opposite phase of that last literal.
+        - false => otherwise (no implication).
+    */
+    bool checkImplication( const Dependency &dep );
+    bool hasImplication() const;
+    void getImplication( unsigned &var, ReLUState &phase ) const;
+
 private:
     DependencyId _depId;                 // Index of the owning dependency
     Vector<ReLURuntimeState> _current;   // index-aligned literal states
+
+    bool _hasImplication;
+    unsigned _impVar;
+    ReLUState _impPhase;
+
 };
 
 #endif // __DependencyState_h__
