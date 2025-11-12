@@ -67,6 +67,12 @@ public:
     const Vector<ReLURuntimeState> &getCurrent() const;
     Vector<ReLURuntimeState> &getCurrent();
 
+    // Set literal i to Active; requires it is currently Unstable.
+    void setActive( unsigned i );
+
+    // Set literal i to Inactive; requires it is currently Unstable.
+    void setInactive( unsigned i );
+
     /*
       Check whether this dependency is now "one-away" given the current runtime
       phases in `current`. If so, return true and output the single implied

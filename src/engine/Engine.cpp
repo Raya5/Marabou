@@ -2097,7 +2097,7 @@ void Engine::applySplit( const PiecewiseLinearCaseSplit &split )
         unsigned variable = _tableau->getVariableAfterMerging( bound._variable );
 
         if ( bound._type == Tightening::LB )
-        {   
+        {
             double oldBound = _boundManager.getLowerBound( bound._variable );
             double newBound = bound._value;
             ENGINE_LOG(
@@ -2108,16 +2108,14 @@ void Engine::applySplit( const PiecewiseLinearCaseSplit &split )
                 _boundManager.resetExplanation( variable, Tightening::LB );
                 _groundBoundManager.addGroundBound( variable, bound._value, Tightening::LB, true );
                 _boundManager.tightenLowerBound( variable, bound._value );
-                _dependencyAnalyzer->notifyLowerBoundUpdate(bound._variable, oldBound, newBound);
             }
             else if ( !_produceUNSATProofs ){
-                if ( FloatUtils::lt( bound._value, _boundManager.getLowerBound( bound._variable ) ) )
-                {
-                    printf("Error from debug: Why update bounds?");
-                    ASSERT(false);
-                }    
                 _boundManager.tightenLowerBound( variable, bound._value );
-                _dependencyAnalyzer->notifyLowerBoundUpdate(bound._variable, oldBound, newBound);
+                if ( _incrementalMode )
+                {
+                    ASSERT( _dependencyAnalyzer )
+                    _dependencyAnalyzer->notifyLowerBoundUpdate(bound._variable, oldBound, newBound);
+                }
             }
         }
         else
@@ -2132,16 +2130,14 @@ void Engine::applySplit( const PiecewiseLinearCaseSplit &split )
                 _boundManager.resetExplanation( variable, Tightening::UB );
                 _groundBoundManager.addGroundBound( variable, bound._value, Tightening::UB, true );
                 _boundManager.tightenUpperBound( variable, bound._value );
-                _dependencyAnalyzer->notifyUpperBoundUpdate(bound._variable, oldBound, newBound);
             }
             else if ( !_produceUNSATProofs ){
-                if ( FloatUtils::gt( bound._value, _boundManager.getUpperBound( bound._variable ) ) )
-                {
-                    printf("Error from debug: Why update bounds?");
-                    ASSERT(false);
-                }    
                 _boundManager.tightenUpperBound( variable, bound._value );
-                _dependencyAnalyzer->notifyUpperBoundUpdate(bound._variable, oldBound, newBound);
+                if ( _incrementalMode )
+                {
+                    ASSERT( _dependencyAnalyzer )
+                    _dependencyAnalyzer->notifyUpperBoundUpdate(bound._variable, oldBound, newBound);
+                }
             }
         }
     }

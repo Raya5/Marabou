@@ -380,12 +380,8 @@ bool DependencyAnalyzer::recordConflict( Dependency d )
         static_cast<unsigned>( d.size() ),
         _dependencyStates.size() );
 
-    for ( unsigned i = 0; i < _dependencyStates.size(); ++i )
-    {
-        const auto &st = _dependencyStates[i];
-        printf("   [%u] depId=%u  literals=%u\n",
-            i, st.getDepId(), st.size() );
-    }
+    printf("   [%u] depId=%u  literals=%u\n", 
+        id, st.getDepId(), st.size() );
     /**************** End For Debugging ********************/
 
     // Track for future duplicate ASSERTs
@@ -501,6 +497,27 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
         ( state == ReLUState::Active ) ? ReLURuntimeState::Active
                                        : ReLURuntimeState::Inactive;
 
+    /**************** Debug: print current _seenPhase map ****************/
+    printf("[DA][debug] notifyNeuronFixed(var=%u, state=%s)\n",
+        var, (state == ReLUState::Active ? "Active" : "Inactive"));
+
+    if ( !_seenPhase.empty() )
+    {
+        printf("[DA][debug] _seenPhase contents:\n");
+        for ( const auto &entry : _seenPhase )
+        {
+            const char *phaseStr = "Unstable";
+            if ( entry.second == ReLURuntimeState::Active )   phaseStr = "Active";
+            else if ( entry.second == ReLURuntimeState::Inactive ) phaseStr = "Inactive";
+            printf("   var=%u  -> %s\n", entry.first, phaseStr);
+        }
+    }
+    else
+    {
+        printf("[DA][debug] _seenPhase is empty.\n");
+    }
+    /**************** End Debug ****************/
+
     // Insert-or-get slot; default-initialized to Unstable (enum underlying 0)
     ReLURuntimeState &slot = _seenPhase[var];
 
@@ -517,6 +534,7 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
     if ( it == watchMap.end() )
     {
         // No dependencies watch this literal — nothing to do
+        printf("[DA][debug] No dependencies watch this literal %u — nothing to do.\n", var);
         return false;
     }
     // IDs of dependencies that contain literal (var, state)
@@ -566,11 +584,15 @@ void DependencyAnalyzer::notifyLowerBoundUpdate( unsigned variable,
                                                  double newLowerBound )
 {
     // Lower bounds must only move up (monotone tightening)
+    if ( !FloatUtils::gt( newLowerBound, previousLowerBound ) )
+        return;
     ASSERT( !FloatUtils::lt( newLowerBound, previousLowerBound ) );
 
     // Detect transition to guaranteed Active
-    if ( previousLowerBound <= 0.0 && newLowerBound > 0.0 )
-        notifyNeuronFixed( variable, ReLUState::Active );
+    printf("[DA] LB %.6g -> %.6g\n", previousLowerBound, newLowerBound);
+    if ( previousLowerBound <= 0.0 && newLowerBound >= 0.0 ){
+        printf("[DA] Valid LB\n");
+        notifyNeuronFixed( variable, ReLUState::Active );}
 }
 
 void DependencyAnalyzer::notifyUpperBoundUpdate( unsigned variable,
@@ -578,11 +600,15 @@ void DependencyAnalyzer::notifyUpperBoundUpdate( unsigned variable,
                                                  double newUpperBound )
 {
     // Upper bounds must only move down (monotone tightening)
+    if ( !FloatUtils::lt( newUpperBound, previousUpperBound ) )
+        return;
     ASSERT( !FloatUtils::gt( newUpperBound, previousUpperBound ) );
 
     // Detect transition to guaranteed Inactive
-    if ( previousUpperBound >= 0.0 && newUpperBound < 0.0 )
-        notifyNeuronFixed( variable, ReLUState::Inactive );
+    printf("[DA] UB %.6g -> %.6g\n", previousUpperBound, newUpperBound);
+    if ( previousUpperBound >= 0.0 && newUpperBound <= 0.0 ){
+        printf("[DA] Valid UB\n");
+        notifyNeuronFixed( variable, ReLUState::Inactive );}
 }
 
 

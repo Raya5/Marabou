@@ -43,6 +43,20 @@ Vector<ReLURuntimeState> &DependencyState::getCurrent()
     return _current;
 }
 
+void DependencyState::setActive( unsigned i )
+{
+    ASSERT( i < _current.size() );
+    ASSERT( _current[i] == ReLURuntimeState::Unstable );
+    _current[i] = ReLURuntimeState::Active;
+}
+
+void DependencyState::setInactive( unsigned i )
+{
+    ASSERT( i < _current.size() );
+    ASSERT( _current[i] == ReLURuntimeState::Unstable );
+    _current[i] = ReLURuntimeState::Inactive;
+}
+
 static inline ReLUState negatePhase( ReLUState s )
 {
     return ( s == ReLUState::Active ) ? ReLUState::Inactive : ReLUState::Active;
