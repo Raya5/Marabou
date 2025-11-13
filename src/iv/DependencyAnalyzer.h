@@ -26,7 +26,8 @@
 #include "Layer.h"
 #include "Dependency.h"
 #include "DependencyState.h"
-
+#include "context/cdo.h"
+#include "context/context.h"
 
 // #include <memory>
 
@@ -54,6 +55,14 @@ public:
       Call once right after construction.
     */
     void buildFromBase();
+
+    /*
+      Set the current Context object used for context-dependent
+      data structures and backtracking. Should be called once the
+      engine context is available.
+    */
+    void setContext( CVC4::context::Context *ctx );
+
     /*
       Accessor for the stored base InputQuery pointer (may be nullptr).
       Intended for internal/diagnostic use only.
@@ -174,6 +183,7 @@ public:
     /**************** End For Debugging ********************/
 
 private:
+    CVC4::context::Context *_context;
     /*
       Non-owning pointer to the base InputQuery provided by the builder
     */

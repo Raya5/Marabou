@@ -198,6 +198,7 @@ bool Engine::solve( double timeoutInSeconds )
     // --- incremental ---
     if ( _dependencyAnalyzer ) {
         ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
+        _dependencyAnalyzer->setContext( &_context);
         // printf( "[Engine] Incremental analyzer attached (MVP)\n" );
     } else if ( Options::get()->getBool( Options::INCREMENTAL_MODE ) ) {
         printf( "[Engine] Incremental mode enabled (no analyzer attached)\n" );
@@ -4098,7 +4099,7 @@ Engine::analyseExplanationDependencies( const SparseUnsortedList &explanation,
 // --- incremental ---
 void Engine::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer ) 
 {
-     _dependencyAnalyzer = std::move( dependencyAnalyzer ); 
+    _dependencyAnalyzer = std::move( dependencyAnalyzer ); 
 }
 std::shared_ptr<DependencyAnalyzer> Engine::getDependencyAnalyzer() const 
 { 

@@ -21,7 +21,8 @@
 #include "Layer.h"
 
 DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq )
-    : _baseIpq( baseIpq )
+    : _context( nullptr )
+    , _baseIpq( baseIpq )
     , _preprocessedQuery( nullptr )
     , _networkLevelReasoner( nullptr )
 {
@@ -68,6 +69,12 @@ void DependencyAnalyzer::buildFromBase()
 }
 
 DependencyAnalyzer::~DependencyAnalyzer() = default;
+
+void DependencyAnalyzer::setContext( CVC4::context::Context *ctx )
+{
+    ASSERT( ctx );
+    _context = ctx;
+}
 
 const InputQuery *DependencyAnalyzer::getBaseInputQuery() const
 {
@@ -569,8 +576,9 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
             ( state == ReLUState::Active ) ? ReLURuntimeState::Active
                                         : ReLURuntimeState::Inactive;
 
-        if ( depState.checkImplication( dep ) ){
-            _activeDepIds.append(depId);
+        if ( depState.checkImplication( dep ) )
+        {
+            _activeDepIds.append( depId );
             foundDep = true;
         }
     }
