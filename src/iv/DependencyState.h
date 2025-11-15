@@ -23,6 +23,7 @@
 #include "Vector.h"
 #include "Dependency.h"
 // #include <cstdint>
+#include "context/cdo.h"
 
 /*
   Possible runtime states for a ReLU literal within a dependency.
@@ -49,7 +50,11 @@ public:
       Construct a DependencyState for a given dependency id,
       initializing all literal states to Unstable.
     */
-    DependencyState( DependencyId id, unsigned size );
+    DependencyState( DependencyId depId,
+                     unsigned numLiterals,
+                     CVC4::context::Context &ctx );
+    
+    ~DependencyState();
 
     /*
       Return the owning dependency id.
@@ -64,8 +69,10 @@ public:
     /*
       Accessors for the literal runtime state vector.
     */
-    const Vector<ReLURuntimeState> &getCurrent() const;
-    Vector<ReLURuntimeState> &getCurrent();
+    // const Vector<ReLURuntimeState> &getCurrent() const;
+    // Vector<ReLURuntimeState> &getCurrent();
+    ReLURuntimeState getLiteralState( unsigned i ) const;
+
 
     // Set literal i to Active; requires it is currently Unstable.
     void setActive( unsigned i );
@@ -90,7 +97,8 @@ public:
 
 private:
     DependencyId _depId;                 // Index of the owning dependency
-    Vector<ReLURuntimeState> _current;   // index-aligned literal states
+    Vector<CVC4::context::CDO<ReLURuntimeState> *> _current; // index-aligned literal states
+
 
     bool _hasImplication;
     unsigned _impVar;

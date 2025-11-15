@@ -74,6 +74,18 @@ void DependencyAnalyzer::setContext( CVC4::context::Context *ctx )
 {
     ASSERT( ctx );
     _context = ctx;
+
+    // (Re)build runtime states for all currently-known dependencies
+    _dependencyStates.clear();
+    _dependencyStates.reserve( _dependencies.size() );
+
+    for ( unsigned id = 0; id < _dependencies.size(); ++id )
+    {
+        const Dependency &d = _dependencies[id];
+        _addDependencyRuntimeState( id, d );
+    }
+
+    ASSERT( _dependencyStates.size() == _dependencies.size() );
 }
 
 const InputQuery *DependencyAnalyzer::getBaseInputQuery() const
@@ -224,7 +236,6 @@ unsigned DependencyAnalyzer::computeSameLayerDependencies( unsigned weightedSumL
     printf("[DA] layer %u: scanned %zu pairs, added %u conflicts\n",
            weightedSumLayerIndex, ( unstable.size() * ( unstable.size() - 1 ) ) / 2, added );
 
-    printf("*******************  ACHIEVED  ******************* \n");
     return added;
 }
 
@@ -358,55 +369,35 @@ bool DependencyAnalyzer::recordConflict( Dependency d )
     // --- Basic sanity checks ---
     ASSERT( d.size() >= 2 );
     ASSERT( d.getVars().size() == d.getStates().size() );
-    
+
     // --- Get vars and states separately ---
     const std::vector<unsigned> &vars   = d.getVars();
     const std::vector<ReLUState> &states = d.getStates();
-    
+
     // --- Canonical ordering sanity check ---
     for ( size_t i = 1; i < vars.size(); ++i )
         ASSERT( vars[i - 1] < vars[i] );  // must be strictly ascending
 
     // --- Debug-only duplicate assertion ---
     ASSERT( _dependencyIndex.find( d ) == _dependencyIndex.end() );  // should not already exist
-    // --- End Debug-only duplicate assertion ---
 
-    // --- Allocate stable id and store the value object ---
-    const DependencyState::DependencyId id = _dependencies.size();
-    _dependencies.push_back( d );
-
-    // --- Create parallel runtime state (all Unstable), index-aligned with d.getVars() ---
-    DependencyState st( id, static_cast<unsigned>( d.size() ) );
-    _dependencyStates.push_back( std::move( st ) );
-    ASSERT( _dependencyStates.size() == _dependencies.size() );
-
-
-    /**************** For Debugging ********************/
-    printf("[DA] Added DependencyState id=%u, size=%u | total now=%zu\n",
-        id,
-        static_cast<unsigned>( d.size() ),
-        _dependencyStates.size() );
-
-    printf("   [%u] depId=%u  literals=%u\n", 
-        id, st.getDepId(), st.size() );
-    /**************** End For Debugging ********************/
-
-    // Track for future duplicate ASSERTs
-    _dependencyIndex.emplace( d, id );
-
+    // --- Store dependency & create runtime state ---
+    const DependencyState::DependencyId id = _addDependency( d );
+    if ( _context )
+        _addDependencyRuntimeState( id, d );
 
     // --- Register watches for each literal ---
     for ( unsigned i = 0; i < vars.size(); ++i )
     {
-        const unsigned v = vars[i];
-        const ReLUState s = states[i];
+        const unsigned    v = vars[i];
+        const ReLUState   s = states[i];
 
         // Choose bucket by polarity
         auto &bucket = ( s == ReLUState::Active ) ? _watchActive[v] : _watchInactive[v];
 
         // Debug Sanity: no duplicate ids in the same bucket
         for ( unsigned k = 0; k < bucket.size(); ++k )
-        ASSERT( bucket[k] != id );
+            ASSERT( bucket[k] != id );
         // End Debug Sanity: no duplicate ids in the same bucket
 
         bucket.append( id );
@@ -414,6 +405,7 @@ bool DependencyAnalyzer::recordConflict( Dependency d )
 
     return true; // Return true if newly inserted 
 }
+
 
 void DependencyAnalyzer::_getLayerBounds( const NLR::Layer *layer,
                                           Vector<double> &lowerBounds,
@@ -569,13 +561,14 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
         ASSERT( idx >= 0 );
 
         // Sanity: we should be transitioning from Unstable → {Active/Inactive}
-        ASSERT( depState.getCurrent()[idx] == ReLURuntimeState::Unstable );
+        ASSERT( depState.getLiteralState( idx ) == ReLURuntimeState::Unstable );
+        if ( state == ReLUState::Active )
+            depState.setActive( idx );
+        else
+            depState.setInactive( idx );
 
         // Apply the observed runtime state
-        depState.getCurrent()[idx] =
-            ( state == ReLUState::Active ) ? ReLURuntimeState::Active
-                                        : ReLURuntimeState::Inactive;
-
+        
         if ( depState.checkImplication( dep ) )
         {
             _activeDepIds.append( depId );
@@ -617,6 +610,39 @@ void DependencyAnalyzer::notifyUpperBoundUpdate( unsigned variable,
     if ( previousUpperBound >= 0.0 && newUpperBound <= 0.0 ){
         printf("[DA] Valid UB\n");
         notifyNeuronFixed( variable, ReLUState::Inactive );}
+}
+
+DependencyState::DependencyId DependencyAnalyzer::_addDependency( const Dependency &d )
+{
+    const DependencyState::DependencyId id = _dependencies.size();
+    _dependencies.push_back( d );
+
+    // Track for future duplicate ASSERTs
+    _dependencyIndex.emplace( d, id );
+
+    return id;
+}
+
+void DependencyAnalyzer::_addDependencyRuntimeState( DependencyState::DependencyId id,
+                                                    const Dependency &d )
+{
+    ASSERT( _context ); // make sure setContext() was called
+
+    DependencyState st( id,
+                        static_cast<unsigned>( d.size() ),
+                        *_context );
+    _dependencyStates.push_back( std::move( st ) );
+
+    /**************** For Debugging ********************/
+    const DependencyState &last = _dependencyStates.back();
+    printf("[DA] Added DependencyState id=%u, size=%u | total now=%zu\n",
+           id,
+           static_cast<unsigned>( d.size() ),
+           _dependencyStates.size() );
+
+    printf("   [%u] depId=%u  literals=%u\n",
+           id, last.getDepId(), last.size() );
+    /**************** End For Debugging ********************/
 }
 
 

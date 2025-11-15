@@ -224,6 +224,19 @@ private:
     /**************** End For Debugging ********************/
 
 
+    /*
+      Store the given dependency value in _dependencies and update the
+      index used for duplicate detection. Returns the assigned id.
+    */
+    DependencyState::DependencyId _addDependency( const Dependency &d );
+
+    /*
+      Create and append a DependencyState runtime object for the given
+      dependency id. Uses the current Context to allocate context-dependent
+      runtime cells.
+    */
+    void _addDependencyRuntimeState( DependencyState::DependencyId id,
+                                    const Dependency &d );
 };
 
 #endif // __DependencyAnalyzer_h__

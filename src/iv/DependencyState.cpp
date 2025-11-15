@@ -17,11 +17,24 @@ DependencyState::DependencyState()
 {
 }
 
-DependencyState::DependencyState( DependencyId id, unsigned size )
-    : _depId( id )
-    , _current( size, ReLURuntimeState::Unstable )
+DependencyState::DependencyState( DependencyId depId,
+                                  unsigned numLiterals,
+                                  CVC4::context::Context &ctx )
+    : _depId( depId )
+    , _hasImplication( false )
 {
+    _current.clear();
+    for ( unsigned i = 0; i < numLiterals; ++i )
+    {
+        _current.append(
+            new (true) CVC4::context::CDO<ReLURuntimeState>( &ctx ));
+            // new CVC4::context::CDO<ReLURuntimeState>( &ctx,
+            //                                           ReLURuntimeState::Unstable ) );
+        *_current[_current.size() -1 ] = ReLURuntimeState::Unstable;
+    }
 }
+
+DependencyState::~DependencyState() = default;
 
 DependencyState::DependencyId DependencyState::getDepId() const
 {
@@ -33,29 +46,26 @@ unsigned DependencyState::size() const
     return _current.size();
 }
 
-const Vector<ReLURuntimeState> &DependencyState::getCurrent() const
+ReLURuntimeState DependencyState::getLiteralState( unsigned i ) const
 {
-    return _current;
-}
-
-Vector<ReLURuntimeState> &DependencyState::getCurrent()
-{
-    return _current;
+    ASSERT( i < _current.size() );
+    return *_current[i];                     // CDO<T> → T via operator T()
 }
 
 void DependencyState::setActive( unsigned i )
 {
     ASSERT( i < _current.size() );
-    ASSERT( _current[i] == ReLURuntimeState::Unstable );
-    _current[i] = ReLURuntimeState::Active;
+    ASSERT( *_current[i] == ReLURuntimeState::Unstable );
+    *_current[i] = ReLURuntimeState::Active;
 }
 
 void DependencyState::setInactive( unsigned i )
 {
     ASSERT( i < _current.size() );
-    ASSERT( _current[i] == ReLURuntimeState::Unstable );
-    _current[i] = ReLURuntimeState::Inactive;
+    ASSERT( *_current[i] == ReLURuntimeState::Unstable );
+    *_current[i] = ReLURuntimeState::Inactive;
 }
+
 
 static inline ReLUState negatePhase( ReLUState s )
 {
@@ -75,7 +85,7 @@ bool DependencyState::checkImplication( const Dependency &dep)
 
     for ( unsigned i = 0; i < vars.size(); ++i )
     {
-        const auto rt = _current[i];
+        const ReLURuntimeState rt = getLiteralState( i );
         if ( rt == ReLURuntimeState::Unstable ) { ++unset; lastUnsetIdx = i; continue; }
 
         const ReLUState rtAsPhase =
