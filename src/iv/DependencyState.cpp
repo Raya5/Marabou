@@ -13,7 +13,6 @@
 
 DependencyState::DependencyState()
     : _depId( (unsigned)-1 )
-    , _hasImplication(false)
 {
 }
 
@@ -21,7 +20,6 @@ DependencyState::DependencyState( DependencyId depId,
                                   unsigned numLiterals,
                                   CVC4::context::Context &ctx )
     : _depId( depId )
-    , _hasImplication( false )
 {
     _current.clear();
     for ( unsigned i = 0; i < numLiterals; ++i )
@@ -66,15 +64,15 @@ void DependencyState::setInactive( unsigned i )
     *_current[i] = ReLURuntimeState::Inactive;
 }
 
-
 static inline ReLUState negatePhase( ReLUState s )
 {
     return ( s == ReLUState::Active ) ? ReLUState::Inactive : ReLUState::Active;
 }
 
-bool DependencyState::checkImplication( const Dependency &dep) 
+bool DependencyState::checkImplication( const Dependency &dep,
+                                        unsigned &outVar,
+                                        ReLUState &outPhase ) const
 {
-    // 2) One-away check
     const auto &vars   = dep.getVars();
     const auto &phases = dep.getStates();
     ASSERT( vars.size() == phases.size() );
@@ -86,32 +84,35 @@ bool DependencyState::checkImplication( const Dependency &dep)
     for ( unsigned i = 0; i < vars.size(); ++i )
     {
         const ReLURuntimeState rt = getLiteralState( i );
-        if ( rt == ReLURuntimeState::Unstable ) { ++unset; lastUnsetIdx = i; continue; }
+
+        if ( rt == ReLURuntimeState::Unstable )
+        {
+            ++unset;
+            lastUnsetIdx = static_cast<int>( i );
+            continue;
+        }
 
         const ReLUState rtAsPhase =
-            ( rt == ReLURuntimeState::Active ) ? ReLUState::Active : ReLUState::Inactive;
+            ( rt == ReLURuntimeState::Active ) ? ReLUState::Active
+                                               : ReLUState::Inactive;
 
-        if ( rtAsPhase == phases[i] ) ++matched;
-        else                          ++contradicted;
+        if ( rtAsPhase == phases[i] )
+            ++matched;
+        else
+            ++contradicted;
     }
 
     ASSERT( matched + contradicted + unset == dep.size() );
 
+    // One-away nogood: exactly one literal unset, none contradicted
     if ( contradicted == 0 && unset == 1 )
     {
-        _hasImplication = true;
-        _impVar   = vars[lastUnsetIdx];
-        _impPhase = negatePhase( phases[lastUnsetIdx] ); // opposite to nogood polarity
+        ASSERT( lastUnsetIdx >= 0 );
+        outVar   = vars[ lastUnsetIdx ];
+        outPhase = negatePhase( phases[ lastUnsetIdx ] ); // opposite to nogood polarity
         return true;
     }
 
     return false;
 }
 
-bool DependencyState::hasImplication() const { return _hasImplication; }
-
-void DependencyState::getImplication( unsigned &var, ReLUState &phase ) const
-{
-    ASSERT( _hasImplication );
-    var = _impVar; phase = _impPhase;
-}

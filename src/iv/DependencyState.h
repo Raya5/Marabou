@@ -81,9 +81,8 @@ public:
     void setInactive( unsigned i );
 
     /*
-      Check whether this dependency is now "one-away" given the current runtime
-      phases in `current`. If so, return true and output the single implied
-      (var, phase) that must be forced to avoid violating the nogood.
+      Check whether this dependency is now "one-away" given the current
+      runtime phases in `_current`.
 
       Returns:
         - true  => exactly one literal is still Unstable, all others are fixed,
@@ -91,18 +90,14 @@ public:
                   the forced opposite phase of that last literal.
         - false => otherwise (no implication).
     */
-    bool checkImplication( const Dependency &dep );
-    bool hasImplication() const;
-    void getImplication( unsigned &var, ReLUState &phase ) const;
+    bool checkImplication( const Dependency &dep,
+                          unsigned &outVar,
+                          ReLUState &outPhase ) const;
+
 
 private:
     DependencyId _depId;                 // Index of the owning dependency
     Vector<CVC4::context::CDO<ReLURuntimeState> *> _current; // index-aligned literal states
-
-
-    bool _hasImplication;
-    unsigned _impVar;
-    ReLUState _impPhase;
 
 };
 

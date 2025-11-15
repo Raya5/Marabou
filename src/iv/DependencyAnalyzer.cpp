@@ -568,12 +568,24 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
             depState.setInactive( idx );
 
         // Apply the observed runtime state
-        
-        if ( depState.checkImplication( dep ) )
+        unsigned impliedVar = 0;
+        ReLUState impliedPhase = ReLUState::Active; // default, will be overwritten
+
+        if ( depState.checkImplication( dep, impliedVar, impliedPhase ) )
         {
+            // For now we just record that this dependency is “active”;
+            // later we can also store (impliedVar, impliedPhase) somewhere.
             _activeDepIds.append( depId );
             foundDep = true;
+
+            // Optional debug:
+            printf("[DA] Dep %u implies var %u must be %s\n",
+                depId,
+                impliedVar,
+                (impliedPhase == ReLUState::Active ? "Active" : "Inactive"));
         }
+
+
     }
     if ( foundDep )
         ASSERT("Found!!")
