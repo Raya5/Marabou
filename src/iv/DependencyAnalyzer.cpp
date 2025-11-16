@@ -25,6 +25,7 @@ DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq )
     , _baseIpq( baseIpq )
     , _preprocessedQuery( nullptr )
     , _networkLevelReasoner( nullptr )
+    , _seenPhase( nullptr )
 {
     buildFromBase();
     std::printf("[DA] initial _baseIpq: vars=%u, eqs=%u\n",
@@ -86,6 +87,9 @@ void DependencyAnalyzer::setContext( CVC4::context::Context *ctx )
     }
 
     ASSERT( _dependencyStates.size() == _dependencies.size() );
+
+    // Build context-dependent seen-phase map
+    _seenPhase = new (true) CVC4::context::CDHashMap<unsigned, ReLURuntimeState, std::hash<unsigned>> ( _context );
 }
 
 const InputQuery *DependencyAnalyzer::getBaseInputQuery() const
@@ -491,24 +495,31 @@ void DependencyAnalyzer::_sliceMinMax_givenOtherZero( const Vector<double> &w_t,
 
 bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
 {
+    ASSERT( _seenPhase );
     // Map ReLUState -> runtime state enum
     const ReLURuntimeState incoming =
         ( state == ReLUState::Active ) ? ReLURuntimeState::Active
                                        : ReLURuntimeState::Inactive;
 
+    auto ait = _seenPhase->find( var );    
+    ASSERT (ait == _seenPhase->end())
+    _seenPhase->insert( var, incoming );
+
     /**************** Debug: print current _seenPhase map ****************/
     printf("[DA][debug] notifyNeuronFixed(var=%u, state=%s)\n",
-        var, (state == ReLUState::Active ? "Active" : "Inactive"));
+           var, (state == ReLUState::Active ? "Active" : "Inactive"));
 
-    if ( !_seenPhase.empty() )
+    if ( !_seenPhase->empty() )
     {
         printf("[DA][debug] _seenPhase contents:\n");
-        for ( const auto &entry : _seenPhase )
+        for ( auto it = _seenPhase->begin(); it != _seenPhase->end(); ++it )
         {
+            const unsigned trackedVar = (*it).first;
+            const ReLURuntimeState rt = (*it).second;
             const char *phaseStr = "Unstable";
-            if ( entry.second == ReLURuntimeState::Active )   phaseStr = "Active";
-            else if ( entry.second == ReLURuntimeState::Inactive ) phaseStr = "Inactive";
-            printf("   var=%u  -> %s\n", entry.first, phaseStr);
+            if ( rt == ReLURuntimeState::Active )   phaseStr = "Active";
+            else if ( rt == ReLURuntimeState::Inactive ) phaseStr = "Inactive";
+            printf("   var=%u  -> %s\n", trackedVar, phaseStr);
         }
     }
     else
@@ -516,16 +527,6 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
         printf("[DA][debug] _seenPhase is empty.\n");
     }
     /**************** End Debug ****************/
-
-    // Insert-or-get slot; default-initialized to Unstable (enum underlying 0)
-    ReLURuntimeState &slot = _seenPhase[var];
-
-    // We do not expect duplicate notifications or contradictions.
-    // If this fires, the caller notified twice or changed its mind without backtracking.
-    ASSERT( slot == ReLURuntimeState::Unstable );
-
-    // Mark as seen/fixed
-    slot = incoming;
 
     // Pick the watched bucket (don’t create if missing)
     const auto &watchMap = ( state == ReLUState::Active ) ? _watchActive : _watchInactive;
@@ -602,7 +603,7 @@ void DependencyAnalyzer::notifyLowerBoundUpdate( unsigned variable,
     ASSERT( !FloatUtils::lt( newLowerBound, previousLowerBound ) );
 
     // Detect transition to guaranteed Active
-    printf("[DA] LB %.6g -> %.6g\n", previousLowerBound, newLowerBound);
+    printf("[DA] LB %u for %.6g -> %.6g\n", variable, previousLowerBound, newLowerBound);
     if ( previousLowerBound <= 0.0 && newLowerBound >= 0.0 ){
         printf("[DA] Valid LB\n");
         notifyNeuronFixed( variable, ReLUState::Active );}
@@ -618,7 +619,7 @@ void DependencyAnalyzer::notifyUpperBoundUpdate( unsigned variable,
     ASSERT( !FloatUtils::gt( newUpperBound, previousUpperBound ) );
 
     // Detect transition to guaranteed Inactive
-    printf("[DA] UB %.6g -> %.6g\n", previousUpperBound, newUpperBound);
+    printf("[DA] UB %u for %.6g -> %.6g\n", variable, previousUpperBound, newUpperBound);
     if ( previousUpperBound >= 0.0 && newUpperBound <= 0.0 ){
         printf("[DA] Valid UB\n");
         notifyNeuronFixed( variable, ReLUState::Inactive );}
@@ -652,8 +653,21 @@ void DependencyAnalyzer::_addDependencyRuntimeState( DependencyState::Dependency
            static_cast<unsigned>( d.size() ),
            _dependencyStates.size() );
 
-    printf("   [%u] depId=%u  literals=%u\n",
-           id, last.getDepId(), last.size() );
+    printf("   [%u] depId=%u  literals=%u  pattern=",
+        id, last.getDepId(), last.size() );
+
+    const std::vector<unsigned>   &vars   = d.getVars();
+    const std::vector<ReLUState>  &phases = d.getStates();
+
+    for ( unsigned i = 0; i < vars.size(); ++i )
+    {
+        printf(" (%u,%c)", 
+            vars[i],
+            phases[i] == ReLUState::Active ? 'A' : 'I');
+    }
+
+    printf("\n");
+
     /**************** End For Debugging ********************/
 }
 

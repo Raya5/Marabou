@@ -198,8 +198,8 @@ bool Engine::solve( double timeoutInSeconds )
     // --- incremental ---
     if ( _dependencyAnalyzer ) {
         ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
+        printf( "[Engine] Context to be set in analyzer.\n" );
         _dependencyAnalyzer->setContext( &_context);
-        // printf( "[Engine] Incremental analyzer attached (MVP)\n" );
     } else if ( Options::get()->getBool( Options::INCREMENTAL_MODE ) ) {
         printf( "[Engine] Incremental mode enabled (no analyzer attached)\n" );
     }
@@ -2142,9 +2142,9 @@ void Engine::applySplit( const PiecewiseLinearCaseSplit &split )
             }
         }
     }
-
+    
     if ( _produceUNSATProofs && _UNSATCertificateCurrentPointer )
-        ( **_UNSATCertificateCurrentPointer ).setVisited();
+    ( **_UNSATCertificateCurrentPointer ).setVisited();
 
     DEBUG( _tableau->verifyInvariants() );
     ENGINE_LOG( "Done with split\n" );
@@ -2986,7 +2986,9 @@ bool Engine::restoreSearchTreeState( SearchTreeState &searchTreeState )
         // For debugging purposes
         checkBoundCompliancyWithDebugSolution();
         do
+        {
             performSymbolicBoundTightening();
+        }
         while ( applyAllValidConstraintCaseSplits() );
 
         // Step 2: replay the stack

@@ -219,7 +219,7 @@ private:
     std::unordered_map<Dependency, DependencyState::DependencyId, Dependency::Hasher> _dependencyIndex;
     
     // Track last known phase per variable to avoid duplicate notifications
-    std::unordered_map<unsigned, ReLURuntimeState> _seenPhase;
+    CVC4::context::CDHashMap<unsigned, ReLURuntimeState, std::hash<unsigned>> *_seenPhase;
 
     /**************** End For Debugging ********************/
 
