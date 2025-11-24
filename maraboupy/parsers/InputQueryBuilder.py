@@ -51,8 +51,8 @@ class InputQueryBuilder(ABC):
         self.outputVars = []
         # Incrementality variables
         self.incremental_mode = False
-        self.incremental_points = []
-        self.incremental_epsilon = None
+        self.incremental_input_lbs = None
+        self.incremental_input_ubs = None
         self.incremental_input_min = None   # per-dim mins or scalar
         self.incremental_input_max = None   # per-dim maxs or scalar
 
@@ -65,8 +65,8 @@ class InputQueryBuilder(ABC):
         self.additionalEquList.clear()
         if self.incremental_mode: 
             self.incremental_mode = False
-            self.incremental_points = []
-            self.incremental_epsilon = None
+            self.incremental_input_lbs = None
+            self.incremental_input_ubs = None
 
     def getNewVariable(self):
         """Function to create a new variable
@@ -91,25 +91,41 @@ class InputQueryBuilder(ABC):
         else:
             self.equList += [x]
 
-    def addRobustnessBatch(self, points, epsilon, targetLabel=None, margin=0.0,
+    def addRobustnessBatch(self, points, epsilons, targetLabel=None, margin=0.00001,
                         input_min=0.0, input_max=1.0):
         """
         Add a batch for incremental robustness and (optionally) encode the negated
-        robustness property as a single disjunction:  OR_{k!=t} ( y_t - y_k <= margin ).
+        robustness property as a single disjunction:  OR_{k!=t} ( y_t - y_k <= -margin ).
+        i.e., some other class k is at least `margin` larger than y_t.
 
         Args:
-            points (list[list[float]]): Base inputs (flattened).
-            epsilon (float): L-infinity radius around each point.
-            targetLabel (int|None): If provided, encodes OR_{k!=t}(y_t - y_k <= margin).
-            margin (float): Non-negative class-separation margin.
-            input_min (float | list[float] | np.ndarray): Per-dimension or scalar lower limits.
-            input_max (float | list[float] | np.ndarray): Per-dimension or scalar upper limits.
+            points (list[list[float]] | np.ndarray):
+                Base inputs (flattened), shape (num_points, num_inputs).
+            epsilons (list[float] | np.ndarray):
+                Per-point L-infinity radius around each point, shape (num_points,).
+            targetLabel (int|None):
+                If provided, encodes OR_{k!=t}(y_t - y_k <= margin).
+            margin (float):
+                Non-negative class-separation margin.
+            input_min (float | list[float] | np.ndarray):
+                Per-dimension or scalar lower limits on the *allowed* input range.
+            input_max (float | list[float] | np.ndarray):
+                Per-dimension or scalar upper limits on the *allowed* input range.
         """
         import numpy as np
 
         self.incremental_mode = True
-        self.incremental_points = points
-        self.incremental_epsilon = float(epsilon)
+
+        # Normalize points and epsilons
+        points = np.asarray(points, dtype=float)
+        epsilons = np.asarray(epsilons, dtype=float)
+
+        assert points.ndim == 2, f"points must be 2D (num_points, num_inputs), got shape {points.shape}"
+        assert epsilons.ndim == 1, f"epsilons must be 1D (num_points,), got shape {epsilons.shape}"
+        assert epsilons.shape[0] == points.shape[0], \
+            f"len(epsilons) = {epsilons.shape[0]} must match num_points = {points.shape[0]}"
+
+        num_points, point_dim = points.shape
 
         # Determine number of input dims from the network
         flat_input_vars = []
@@ -119,6 +135,11 @@ class InputQueryBuilder(ABC):
         num_inputs = len(flat_input_vars)
         if num_inputs == 0:
             raise RuntimeError("No input variables found; cannot set batch.")
+
+        if point_dim != num_inputs:
+            raise ValueError(
+                f"Each point must have length {num_inputs}, got {point_dim}."
+            )
 
         # Broadcast/validate input_min / input_max to per-dim arrays
         def _as_per_dim(arr_or_scalar, name):
@@ -138,16 +159,27 @@ class InputQueryBuilder(ABC):
         for idx, p in enumerate(points):
             if len(p) != num_inputs:
                 raise ValueError(f"Point #{idx} has length {len(p)}, expected {num_inputs}.")
-            p_arr = np.asarray(p, dtype=float)
-            if np.any(p_arr < mins - 1e-9) or np.any(p_arr > maxs + 1e-9):
+            if np.any(p < mins - 1e-9) or np.any(p > maxs + 1e-9):
                 raise ValueError(
                     f"Point #{idx} contains values outside declared bounds: "
-                    f"min(p)={np.min(p_arr):.5f}, max(p)={np.max(p_arr):.5f}, "
+                    f"min(p)={np.min(p):.5f}, max(p)={np.max(p):.5f}, "
                     f"expected in [{np.min(mins):.5f}, {np.max(maxs):.5f}]"
                 )
 
+        # These are the global allowed domain bounds (not per-query boxes)
         self.incremental_input_min = mins
         self.incremental_input_max = maxs
+
+        # --- Per-query L_inf boxes: lb/ub for each point
+        # Clip to [mins, maxs] to respect global domain
+        lbs = points - epsilons[:, None]
+        ubs = points + epsilons[:, None]
+        lbs = np.maximum(lbs, mins)   # shape (num_points, num_inputs)
+        ubs = np.minimum(ubs, maxs)
+
+        # Store them for the incremental analyzer
+        self.incremental_input_lbs = lbs
+        self.incremental_input_ubs = ubs
 
         # Optionally encode the shared disjunction (negated robustness)
         if targetLabel is not None:
@@ -172,17 +204,22 @@ class InputQueryBuilder(ABC):
                 eq = MarabouUtils.Equation(MarabouCore.Equation.LE)
                 eq.addAddend(1.0, y_t)
                 eq.addAddend(-1.0, y_k)
-                eq.setScalar(float(margin))
+                eq.setScalar(float(-margin))
                 # Each disjunct is a list of equations; here each disjunct has exactly one inequality
                 disjuncts.append([eq])
 
             # Add a single DisjunctionConstraint with all disjuncts
             self.addDisjunctionConstraint(disjuncts)
+        else:
+            print("[DEBUG] targetLabel not assigned, no output constraints were applied.")
 
-        print(f"[DEBUG] addRobustnessBatch: n_points={len(points)}, ε={epsilon}, "
-            f"targetLabel={targetLabel}, margin={margin}, "
+        print(
+            f"[DEBUG] addRobustnessBatch: n_points={num_points}, "
+            f"epsilons=[min={epsilons.min():.3g}, max={epsilons.max():.3g}], "
+            f"targetLabel={targetLabel}, margin={-margin}, "
             f"[min/max]=[{np.min(self.incremental_input_min):.3g},"
-            f"{np.max(self.incremental_input_max):.3g}]")  # TODO: remove later
+            f"{np.max(self.incremental_input_max):.3g}]"
+        )
 
 
     def setLowerBound(self, x, v):
@@ -453,129 +490,175 @@ class InputQueryBuilder(ABC):
             ipq.setUpperBound(u, self.upperBounds[u])
 
         if self.incremental_mode:
-            print(f"[DEBUG] Building InputQuery in incremental mode with {len(self.incremental_points)} points and ε={self.incremental_epsilon}")
+            print(f"[DEBUG] Building InputQuery in incremental mode with {len(self.incremental_input_lbs)} points")
             # TODO: Pass points and epsilon to ipq once C++ side supports it
 
         return ipq
 
     def getCoveringInputBounds(self):
         """
-        Compute covering input bounds over the whole batch:
-        cover_lb[i] = min_j max(points[j][i] - eps, mins[i])
-        cover_ub[i] = max_j min(points[j][i] + eps, maxs[i])
+        Compute covering input bounds over the whole batch, using the per-query
+        L_inf boxes stored in `incremental_input_lbs` / `incremental_input_ubs`:
+
+            cover_lb[i] = min_j incremental_input_lbs[j, i]
+            cover_ub[i] = max_j incremental_input_ubs[j, i]
+
         Returns:
             (cover_lb, cover_ub): two Python lists of floats, length = #inputs
+
         Preconditions:
-            - addRobustnessBatch(...) called (incremental_* fields set)
-            - points have correct length
+            - addRobustnessBatch(...) called
+            - incremental_input_lbs / incremental_input_ubs are numpy arrays with
+            shape (num_points, num_inputs)
         """
+
         if not self.incremental_mode:
             raise RuntimeError("getCoveringInputBounds called but incremental_mode is False")
 
-        points = self.incremental_points
-        eps    = self.incremental_epsilon
-        mins   = self.incremental_input_min
-        maxs   = self.incremental_input_max
+        if self.incremental_input_lbs is None or self.incremental_input_ubs is None:
+            raise RuntimeError(
+                "incremental_input_lbs / incremental_input_ubs not initialized; "
+                "call addRobustnessBatch first."
+            )
+        if self.incremental_input_min is None or self.incremental_input_max is None:
+            raise RuntimeError(
+                "input_min/input_max were not initialized; call addRobustnessBatch with min/max."
+            )
 
-        if points is None or eps is None or len(points) == 0:
-            raise RuntimeError("Incremental batch is empty or not initialized.")
-        if mins is None or maxs is None:
-            raise RuntimeError("input_min/input_max were not initialized; call addRobustnessBatch with min/max.")
+        lbs = self.incremental_input_lbs
+        ubs = self.incremental_input_ubs
+        mins = self.incremental_input_min
+        maxs = self.incremental_input_max
+
+        # Assert we really have numpy arrays
+        import numpy as np  # in case not already at top of file
+        assert isinstance(lbs, np.ndarray), "incremental_input_lbs must be a numpy array"
+        assert isinstance(ubs, np.ndarray), "incremental_input_ubs must be a numpy array"
+        assert isinstance(mins, np.ndarray), "incremental_input_min must be a numpy array"
+        assert isinstance(maxs, np.ndarray), "incremental_input_max must be a numpy array"
+
+        assert lbs.ndim == 2 and ubs.ndim == 2, \
+            f"incremental_input_lbs/ubs must be 2D (num_points, num_inputs), got {lbs.shape} and {ubs.shape}"
+        assert lbs.shape == ubs.shape, \
+            f"incremental_input_lbs and incremental_input_ubs shapes differ: {lbs.shape} vs {ubs.shape}"
+
+        num_points, num_inputs = lbs.shape
 
         # Flatten inputs in the same order as getInputQuery()
         flat_input_vars = []
         for inputVarArray in self.inputVars:
             for inputVar in inputVarArray.flatten():
                 flat_input_vars.append(int(inputVar))
-        num_inputs = len(flat_input_vars)
 
-        # Length check
-        for idx, p in enumerate(points):
-            if len(p) != num_inputs:
-                raise ValueError(f"Point #{idx} has length {len(p)}, expected {num_inputs}.")
+        if num_inputs != len(flat_input_vars):
+            raise RuntimeError(
+                f"incremental_input_lbs/ubs have {num_inputs} dims, "
+                f"but network has {len(flat_input_vars)} input vars."
+            )
 
         cover_lb = []
         cover_ub = []
         for i in range(num_inputs):
-            lb_i = min(max(p[i] - eps, float(mins[i])) for p in points)
-            ub_i = max(min(p[i] + eps, float(maxs[i])) for p in points)
-            cover_lb.append(float(lb_i))
-            cover_ub.append(float(ub_i))
+            lb_i = float(np.min(lbs[:, i]))
+            ub_i = float(np.max(ubs[:, i]))
+            cover_lb.append(lb_i)
+            cover_ub.append(ub_i)
 
         return cover_lb, cover_ub
+
+
+
+
+
+
+
+
 
     def getIncrementalInputQueries(self):
         """
         Construct a list of per-point InputQuery objects for incremental verification.
 
         Stage 1:
-        - Requires that a batch was supplied via addRobustnessBatch(points, epsilon).
+        - Requires that a batch was supplied via addRobustnessBatch(points, epsilons).
         - For each point, builds a fresh InputQuery via getInputQuery(), then
-            sets the input variable bounds to an L-infinity ball around the point:
-                lb_i = p[i] - epsilon
-                ub_i = p[i] + epsilon
+        sets the input variable bounds from the precomputed L-infinity boxes:
+            lb_i = incremental_input_lbs[pt_idx, i]
+            ub_i = incremental_input_ubs[pt_idx, i]
         - Returns: list of InputQuery objects, one per point.
 
-        Notes / TODO:
-        - TODO: clamp (lb_i, ub_i) to any preexisting network-level bounds if desired.
-        - TODO: register a shared DependencyAnalyzer* on each IPQ when C++ side is ready.
+        Preconditions:
+            - self.incremental_mode is True
+            - self.incremental_input_lbs / self.incremental_input_ubs are numpy arrays
+            of shape (num_points, num_inputs)
         """
+        import numpy as np
+
         # Preconditions
         if not self.incremental_mode:
             raise RuntimeError(
                 "getIncrementalInputQueries called but incremental_mode is False. "
-                "Call addRobustnessBatch(points, epsilon) first."
+                "Call addRobustnessBatch(points, epsilons) first."
             )
 
-        points = self.incremental_points
-        epsilon = self.incremental_epsilon
-        mins = self.incremental_input_min
-        maxs = self.incremental_input_max
-
-        if points is None or epsilon is None or len(points) == 0:
+        if self.incremental_input_lbs is None or self.incremental_input_ubs is None:
             raise RuntimeError(
                 "Incremental batch is empty or not initialized. "
-                "Ensure addRobustnessBatch(points, epsilon) was called with a non-empty list."
+                "Ensure addRobustnessBatch(points, epsilons) was called with a non-empty list."
             )
-        if mins is None or maxs is None:
+        if self.incremental_input_min is None or self.incremental_input_max is None:
             raise RuntimeError("input_min/input_max were not initialized; call addRobustnessBatch with min/max.")
+
+        lbs = self.incremental_input_lbs
+        ubs = self.incremental_input_ubs
+
+        # Assert numpy arrays
+        assert isinstance(lbs, np.ndarray), "incremental_input_lbs must be a numpy array"
+        assert isinstance(ubs, np.ndarray), "incremental_input_ubs must be a numpy array"
+
+        assert lbs.ndim == 2 and ubs.ndim == 2, \
+            f"incremental_input_lbs/ubs must be 2D (num_points, num_inputs), got {lbs.shape} and {ubs.shape}"
+        assert lbs.shape == ubs.shape, \
+            f"incremental_input_lbs and incremental_input_ubs shapes differ: {lbs.shape} vs {ubs.shape}"
+
+        num_points, num_inputs = lbs.shape
 
         # Flatten input vars in the same order as getInputQuery()
         flat_input_vars = []
         for inputVarArray in self.inputVars:
             for inputVar in inputVarArray.flatten():
                 flat_input_vars.append(int(inputVar))
-        num_inputs = len(flat_input_vars)
 
-        # Validate each point’s length
-        for idx, p in enumerate(points):
-            assert len(p) == num_inputs, \
-                f"Point #{idx} has length {len(p)} but network expects {num_inputs} inputs."
+        if num_inputs != len(flat_input_vars):
+            raise RuntimeError(
+                f"incremental_input_lbs/ubs have {num_inputs} dims, "
+                f"but network has {len(flat_input_vars)} input vars."
+            )
 
         # Build one IPQ per point
         ipqs = []
-        print(f"[DEBUG] getIncrementalInputQueries: building {len(points)} IPQs, ε={epsilon}")
+        print(f"[DEBUG] getIncrementalInputQueries: building {num_points} IPQs")
 
-        for pt_idx, p in enumerate(points):
+        for pt_idx in range(num_points):
             ipq = self.getInputQuery()  # includes current constraints, IO markings, etc.
 
             for i, var in enumerate(flat_input_vars):
-                base_lb = float(p[i] - epsilon)
-                base_ub = float(p[i] + epsilon)
-                lb = max(base_lb, float(mins[i]))
-                ub = min(base_ub, float(maxs[i]))
+                lb = float(lbs[pt_idx, i])
+                ub = float(ubs[pt_idx, i])
+
                 if lb > ub:
                     raise ValueError(
-                        f"Clamped bounds invalid at point {pt_idx}, dim {i}: "
-                        f"[{lb}, {ub}] from p={p[i]}, eps={epsilon}, "
-                        f"min={mins[i]}, max={maxs[i]}"
+                        f"Invalid bounds at point {pt_idx}, dim {i}: [{lb}, {ub}]"
                     )
+
                 ipq.setLowerBound(var, lb)
                 ipq.setUpperBound(var, ub)
 
             ipqs.append(ipq)
 
         return ipqs
+
+
+
 
 
     def saveQuery(self, filename=""):

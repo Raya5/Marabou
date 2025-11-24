@@ -537,6 +537,7 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
         printf("[DA][debug] No dependencies watch this literal %u — nothing to do.\n", var);
         return false;
     }
+    printf("[DA][debug] this literal %u is watched.\n", var);
     // IDs of dependencies that contain literal (var, state)
     const Vector<DependencyState::DependencyId> &depIds = it->second;
     bool foundDep = false;
