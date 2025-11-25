@@ -20,17 +20,34 @@
 #include "FloatUtils.h"              // for gt/lt comparisons
 #include "Layer.h"
 
-DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq )
-    : _context( nullptr )
-    , _baseIpq( baseIpq )
-    , _preprocessedQuery( nullptr )
-    , _networkLevelReasoner( nullptr )
-    , _seenPhase( nullptr )
+DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq,
+                                        const Vector<Vector<double>> &allLbs,
+                                        const Vector<Vector<double>> &allUbs )
+    : _baseIpq( baseIpq )
+    , _originalLbs( allLbs )
+    , _originalUbs( allUbs )
 {
+    _numQueries = _originalLbs.size();
+    ASSERT( _numQueries > 0 );
+
+    _inputDim = _originalLbs[0].size();
+    for ( unsigned q = 0; q < _numQueries; ++q )
+        ASSERT( _originalLbs[q].size() == _inputDim &&
+                _originalUbs[q].size() == _inputDim );
+
+    _nextQueryToSolve = 0;
+    ASSERT( _nextQueryToSolve == 0 );
+
+    _computeCoveringBoxFromRemainingQueries();
+
+    _context = nullptr;
+    _seenPhase = nullptr;
+
     buildFromBase();
     std::printf("[DA] initial _baseIpq: vars=%u, eqs=%u\n",
         _baseIpq->getNumberOfVariables(),
         _baseIpq->getNumberOfEquations());
+
 }
 
 void DependencyAnalyzer::buildFromBase()
@@ -61,10 +78,6 @@ void DependencyAnalyzer::buildFromBase()
                             "Preprocessing failed: NetworkLevelReasoner is null." );
     }
     _networkLevelReasoner->computeSuccessorLayers();
-    unsigned numTightened = runBoundTightening();
-    printf("[DA] first DeepPoly tightening: %u tightenings\n", numTightened);
-    computeSameLayerDependencies(1);
-    computeSameLayerDependencies(3);
     // (no tableau hookup, no dumps)
     // debugdiff()
 }
@@ -76,8 +89,42 @@ void DependencyAnalyzer::setContext( CVC4::context::Context *ctx )
     ASSERT( ctx );
     _context = ctx;
 
+
+    unsigned numTightened = runBoundTightening();
+    printf("[DA] DeepPoly tightening: %u tightenings\n", numTightened);
+
+    computeSameLayerDependencies(1);
+    computeSameLayerDependencies(3);
+
+    ASSERT( _networkLevelReasoner );
+
+    const unsigned numLayers = _networkLevelReasoner->getNumberOfLayers();
+
+    printf("[DA][debug] computeDependencies: scanning %u layers for weighted-sum layers\n",
+           numLayers);
+
+    for ( unsigned layerIndex = 0; layerIndex < numLayers; ++layerIndex )
+    {
+        const NLR::Layer *layer = _networkLevelReasoner->getLayer( layerIndex );
+        if ( !layer )
+            continue;
+
+        const auto layerType = layer->getLayerType();
+
+        // Adjust the enum constant name to match your codebase if needed
+        if ( layerType == NLR::Layer::WEIGHTED_SUM ) //NLR::Layer::
+        {
+            printf("[DA][debug]   computing same-layer dependencies for weighted-sum layer %u\n",
+                   layerIndex);
+            computeSameLayerDependencies( layerIndex );
+        }
+    }
+
+    printf("[DA][debug] computeDependencies: done\n");
+
+
     // (Re)build runtime states for all currently-known dependencies
-    _dependencyStates.clear();
+    _dependencyStates.clear(); //TODO: asster this - done before 
     _dependencyStates.reserve( _dependencies.size() );
 
     for ( unsigned id = 0; id < _dependencies.size(); ++id )
@@ -127,11 +174,27 @@ unsigned DependencyAnalyzer::runBoundTightening()
     _networkLevelReasoner->getConstraintTightenings( tightenings );
 
     // 3) Apply them back to the preprocessed query (like Engine does).
+    unsigned numTightened = _applyTighteningsToPreprocessedQuery( tightenings );
+
+    return numTightened;
+}
+
+unsigned DependencyAnalyzer::_applyTighteningsToPreprocessedQuery( const List<Tightening> &tightenings )
+{
+    if ( !_preprocessedQuery )
+    {
+        printf("[DA][error] applyTighteningsToPreprocessedQuery called but _preprocessedQuery is null\n");
+        throw MarabouError( MarabouError::DEBUGGING_ERROR,
+            "applyTighteningsToPreprocessedQuery called before buildFromBase()" );
+    }
+
     unsigned numTightened = 0;
+
     for ( const auto &t : tightenings )
     {
         const unsigned v = t._variable;
         const double   x = t._value;
+
         if ( t._type == Tightening::LB )
         {
             if ( FloatUtils::gt( x, _preprocessedQuery->getLowerBound( v ) ) )
@@ -140,7 +203,7 @@ unsigned DependencyAnalyzer::runBoundTightening()
                 ++numTightened;
             }
         }
-        else /* UB */
+        else  // UB
         {
             if ( FloatUtils::lt( x, _preprocessedQuery->getUpperBound( v ) ) )
             {
@@ -149,6 +212,7 @@ unsigned DependencyAnalyzer::runBoundTightening()
             }
         }
     }
+    printf("[DA][_applyTighteningsToPreprocessedQuery] tightening: %u tightenings\n", numTightened);
     return numTightened;
 }
 
@@ -199,6 +263,15 @@ void DependencyAnalyzer::collectUnstableNeurons( unsigned layerIndex,
     }
 
     printf("[DA] Layer %u: found %zu unstable neurons\n", layerIndex, unstableNeurons.size());
+    printf("[DA] unstable list: [");
+    for ( unsigned i = 0; i < unstableNeurons.size(); ++i )
+    {
+        unsigned varI = weightedSumLayer->neuronToVariable( unstableNeurons[i] );
+        printf("%u", varI);
+        if ( i + 1 < unstableNeurons.size() ) printf(", ");
+    }
+    printf("]\n");
+
 }
 
 
@@ -222,8 +295,11 @@ unsigned DependencyAnalyzer::computeSameLayerDependencies( unsigned weightedSumL
     // build unstable set from pre-activation bounds of this layer
     std::vector<unsigned> unstable;
     collectUnstableNeurons( weightedSumLayerIndex, unstable );
-    if ( unstable.size() < 2 ) return 0;
-
+    if ( unstable.size() < 2 ) 
+    {
+        printf("[DA] not enough unstable neurons: %zu .\n", unstable.size());
+        return 0;
+    }
     // auto &bucket = _pairsByLayer[ weightedSumLayerIndex ];
     unsigned added = 0;
     
@@ -250,8 +326,7 @@ bool DependencyAnalyzer::detectAndRecordPairConflict(unsigned layerIndex,
     Dependency d;
     if (!analyzePairConflict(layerIndex, q, r, d))
         return false;
-    recordConflict(std::move(d));
-    return true;
+    return recordConflict(std::move(d));
 }
 
 /*
@@ -307,12 +382,12 @@ bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
 
     if ( countTrue > 1 )
     {
-        unsigned varQ = weightedSumLayer->neuronToVariable( q );
-        unsigned varR = weightedSumLayer->neuronToVariable( r );
+        unsigned varQ_ = weightedSumLayer->neuronToVariable( q );
+        unsigned varR_ = weightedSumLayer->neuronToVariable( r );
 
         printf("[DA][pair %u,%u] (vars %u,%u) >0(l_q_r0)=%d  <0(u_q_r0)=%d  "
                ">0(l_r_q0)=%d  <0(u_r_q0)=%d  totalTrue=%u\n",
-               q, r, varQ, varR,
+               q, r, varQ_, varR_,
                FloatUtils::gt( l_q_r0, 0.0 ),
                FloatUtils::lt( u_q_r0, 0.0 ),
                FloatUtils::gt( l_r_q0, 0.0 ),
@@ -380,11 +455,16 @@ bool DependencyAnalyzer::recordConflict( Dependency d )
 
     // --- Canonical ordering sanity check ---
     for ( size_t i = 1; i < vars.size(); ++i )
+    {
         ASSERT( vars[i - 1] < vars[i] );  // must be strictly ascending
-
+    }
     // --- Debug-only duplicate assertion ---
-    ASSERT( _dependencyIndex.find( d ) == _dependencyIndex.end() );  // should not already exist
-
+    // ASSERT( _dependencyIndex.find( d ) == _dependencyIndex.end() );  // should not already exist
+    if ( _dependencyIndex.find( d ) != _dependencyIndex.end() )  // should not already exist
+    {
+        printf("[DA][recordConflict] dependency already exists - skipping.\n");
+        return false; // this might happen when we are looking for a dependecies in the next strictier query - we might find dependencies that we found before, for now we will skip them, later TODO: check if ddependcies exist before moving to checking/examining it.
+    }
     // --- Store dependency & create runtime state ---
     const DependencyState::DependencyId id = _addDependency( d );
     if ( _context )
@@ -590,7 +670,10 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
 
     }
     if ( foundDep )
-        ASSERT("Found!!")
+    {
+        printf("Found!!");
+        printf("[DA] [notifyNeuronFixed] Applicable dependecies found: %u \n", _activeDepIds.size());
+    }
     return foundDep;
 }
 
@@ -673,8 +756,146 @@ void DependencyAnalyzer::_addDependencyRuntimeState( DependencyState::Dependency
 }
 
 
+// TODO: implement
+void DependencyAnalyzer::_computeCoveringBoxFromRemainingQueries()
+{
+    ASSERT( _nextQueryToSolve < _numQueries );
+
+    _currentLb = Vector<double>( _inputDim, +INFINITY );
+    _currentUb = Vector<double>( _inputDim, -INFINITY );
+
+    for ( unsigned x = 0; x < _inputDim; ++x )
+    {
+        double lb = +INFINITY;
+        double ub = -INFINITY;
+
+        for ( unsigned q = _nextQueryToSolve; q < _numQueries; ++q )
+        {
+            lb = std::min( lb, _originalLbs[q][x] );
+            ub = std::max( ub, _originalUbs[q][x] );
+        }
+
+        _currentLb[x] = lb;
+        _currentUb[x] = ub;
+    }
+}
+
+bool DependencyAnalyzer::_isSubset( const Vector<double> &lbNew,
+                                   const Vector<double> &ubNew,
+                                   const Vector<double> &lbOld,
+                                   const Vector<double> &ubOld ) const
+
+{
+    for ( unsigned x = 0; x < _inputDim; ++x )
+    {
+        if ( lbNew[x] < lbOld[x] ) return false;
+        if ( ubNew[x] > ubOld[x] ) return false;
+    }
+    return true;
+}
+
+void DependencyAnalyzer::notifyQuerySolved()
+{
+    // todo cleaning and preparing for the new context and query.
+    ASSERT( _nextQueryToSolve < _numQueries);
+    ++_nextQueryToSolve;
+
+    if ( _nextQueryToSolve >= _numQueries )
+        return;
+
+    Vector<double> oldLb = _currentLb;
+    Vector<double> oldUb = _currentUb;
+
+    _computeCoveringBoxFromRemainingQueries();
+
+    // === Debug info ===
+    // printf("[DA][debug] notifyQuerySolved(): tightening input domain\n");
+
+    // unsigned changedCount = 0;
+    // double maxDelta = 0.0;
+
+    // for ( unsigned i = 0; i < _inputDim; ++i )
+    // {
+    //     double oldL = oldLb[i];
+    //     double oldU = oldUb[i];
+    //     double newL = _currentLb[i];
+    //     double newU = _currentUb[i];
+
+    //     bool changed = (oldL != newL) || (oldU != newU);
+    //     if ( changed )
+    //     {
+    //         ++changedCount;
+
+    //         double dL = fabs(oldL - newL);
+    //         double dU = fabs(oldU - newU);
+    //         maxDelta = std::max({maxDelta, dL, dU});
+
+    //         printf("[DA][debug]   dim %u: LB %.6f → %.6f (Δ=%.6f), "
+    //                "UB %.6f → %.6f (Δ=%.6f)\n",
+    //                i, oldL, newL, dL,
+    //                   oldU, newU, dU);
+    //     }
+    // }
+
+    // printf("[DA][debug]   total changed dims = %u / %u, max change = %.6f\n",
+    //        changedCount, _inputDim, maxDelta);
+    // === End of Debug info ===
+    
+    ASSERT( _isSubset( _currentLb, _currentUb, oldLb, oldUb ) );
 
 
+    // --- Build tightenings for input variables based on the new covering box
+    List<Tightening> inputTightenings;
+
+
+    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( 0 );
+    if ( !weightedSumLayer ) {
+        printf("[DA] notifyQuerySolved: layer %u not found in NLR\n", 0);
+        return;
+    }
+    const unsigned numNeurons = weightedSumLayer->getSize();
+    ASSERT (_inputDim == numNeurons);
+    for ( unsigned i = 0; i < _inputDim; ++i )
+    {
+        // Map input-dimension i to the corresponding variable in the preprocessed query.
+        const unsigned var = weightedSumLayer->neuronToVariable( i );
+
+        const double oldL = oldLb[i];
+        const double oldU = oldUb[i];
+        const double newL = _currentLb[i];
+        const double newU = _currentUb[i];
+
+        // Lower bound tightened?
+        if ( FloatUtils::gt( newL, oldL ) )
+        {
+            Tightening tLB( var, newL, Tightening::LB );
+            inputTightenings.append( tLB );
+        }
+
+        // Upper bound tightened?
+        if ( FloatUtils::lt( newU, oldU ) )
+        {
+            Tightening tUB( var, newU, Tightening::UB );
+            inputTightenings.append( tUB );
+        }
+    }
+
+    if ( !inputTightenings.empty() )
+    {
+        unsigned numApplied = _applyTighteningsToPreprocessedQuery( inputTightenings );
+        printf("[DA][debug]   applied %u input tightenings to preprocessed query\n", numApplied );
+    }
+    else
+    {
+        printf("[DA][debug]   no input tightenings to apply after notifyQuerySolved()\n");
+    }
+
+    _context = nullptr;
+    _seenPhase = nullptr;
+    _dependencyStates.clear();
+
+    // computeDependencies(); # todo in the setcontex
+}
 
 
 

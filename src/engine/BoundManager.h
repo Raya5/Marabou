@@ -50,9 +50,11 @@
 #include "Vector.h"
 #include "context/cdo.h"
 #include "context/context.h"
+// #include "DependencyAnalyzer.h"
 
 class ITableau;
 class IEngine;
+class DependencyAnalyzer;
 class BoundManager : public IBoundManager
 {
 public:
@@ -216,6 +218,8 @@ public:
     */
     bool shouldProduceProofs() const;
 
+    void setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer );
+
 private:
     CVC4::context::Context &_context;
     unsigned _size;
@@ -235,6 +239,8 @@ private:
 
     Vector<CVC4::context::CDO<bool> *> _tightenedLower;
     Vector<CVC4::context::CDO<bool> *> _tightenedUpper;
+
+    std::shared_ptr<DependencyAnalyzer> _dependencyAnalyzer; // null if not incremental
 
     /*
        Record first tightening that violates bounds

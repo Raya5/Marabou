@@ -564,11 +564,37 @@ void loadQuery( std::string filename, InputQuery &inputQuery )
 }
 
 // incremental 
+/**
+ * Build and return a DependencyAnalyzer instance.
+ *
+ * This function receives the base InputQuery together with per-query
+ * input-domain bounds and construct the DependencyAnalyzer.
+ */
 std::shared_ptr<DependencyAnalyzer>
-buildDependencyAnalyzer( const InputQuery &baseIpq )
+buildDependencyAnalyzer( const InputQuery &baseIpq,
+                         const std::list<std::list<double>> &allLbs,
+                         const std::list<std::list<double>> &allUbs )
 {
-    // non-owning pointer to the same InputQuery object pybind is passing in
-    return std::make_shared<DependencyAnalyzer>( &baseIpq );
+    ASSERT( allLbs.size() == allUbs.size() );
+    auto toVectorVector = []( const std::list<std::list<double>> &src )
+    {
+        Vector<Vector<double>> dst;
+
+        for ( const auto &row : src )
+        {
+            Vector<double> v;
+            for ( double x : row )
+                v.append( x );
+            dst.append( v );
+        }
+
+        return dst;
+    };
+
+    Vector<Vector<double>> allLbsVector = toVectorVector( allLbs );
+    Vector<Vector<double>> allUbsVector = toVectorVector( allUbs );
+
+    return std::make_shared<DependencyAnalyzer>( &baseIpq, allLbsVector, allUbsVector );
 }
 
 
@@ -1018,7 +1044,9 @@ PYBIND11_MODULE( MarabouCore, m )
             Returns:
                 DependencyAnalyzer: a reusable analyzer object to attach to per-point InputQueries.
         )pbdoc",
-        py::arg("baseIpq")
+        py::arg("baseIpq"),
+        py::arg("allLbs"),
+        py::arg("allUbs")
     );
 
 }

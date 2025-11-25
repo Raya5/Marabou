@@ -200,6 +200,7 @@ bool Engine::solve( double timeoutInSeconds )
         ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
         printf( "[Engine] Context to be set in analyzer.\n" );
         _dependencyAnalyzer->setContext( &_context);
+        _boundManager.setDependencyAnalyzer( _dependencyAnalyzer );
     } else if ( Options::get()->getBool( Options::INCREMENTAL_MODE ) ) {
         printf( "[Engine] Incremental mode enabled (no analyzer attached)\n" );
     }
@@ -260,7 +261,9 @@ bool Engine::solve( double timeoutInSeconds )
                 printf( "Final statistics:\n" );
                 _statistics.print();
             }
-
+            if ( _dependencyAnalyzer ) {
+                _dependencyAnalyzer->notifyQuerySolved();
+            }
             _exitCode = Engine::TIMEOUT;
             _statistics.timeout();
             return false;
@@ -362,6 +365,9 @@ bool Engine::solve( double timeoutInSeconds )
                             ASSERT( _UNSATCertificateCurrentPointer );
                             ( **_UNSATCertificateCurrentPointer ).setSATSolutionFlag();
                         }
+                        if ( _dependencyAnalyzer ) {
+                            _dependencyAnalyzer->notifyQuerySolved();
+                        }
                         _exitCode = Engine::SAT;
                         return true;
                     }
@@ -375,6 +381,9 @@ bool Engine::solve( double timeoutInSeconds )
                         {
                             printf( "\nEngine::solve: at leaf node but solving inconclusive\n" );
                             _statistics.print();
+                        }
+                        if ( _dependencyAnalyzer ) {
+                            _dependencyAnalyzer->notifyQuerySolved();
                         }
                         _exitCode = Engine::UNKNOWN;
                         return false;
@@ -436,6 +445,9 @@ bool Engine::solve( double timeoutInSeconds )
                 {
                     printf( "\nEngine::solve: unsat query\n" );
                     _statistics.print();
+                }
+                if ( _dependencyAnalyzer ) {
+                    _dependencyAnalyzer->notifyQuerySolved();
                 }
                 _exitCode = Engine::UNSAT;
                 return false;
@@ -2099,8 +2111,6 @@ void Engine::applySplit( const PiecewiseLinearCaseSplit &split )
 
         if ( bound._type == Tightening::LB )
         {
-            double oldBound = _boundManager.getLowerBound( bound._variable );
-            double newBound = bound._value;
             ENGINE_LOG(
                 Stringf( "x%u: lower bound set to %.3lf", variable, bound._value ).ascii() );
             if ( _produceUNSATProofs &&
@@ -2112,17 +2122,10 @@ void Engine::applySplit( const PiecewiseLinearCaseSplit &split )
             }
             else if ( !_produceUNSATProofs ){
                 _boundManager.tightenLowerBound( variable, bound._value );
-                if ( _incrementalMode )
-                {
-                    ASSERT( _dependencyAnalyzer )
-                    _dependencyAnalyzer->notifyLowerBoundUpdate(bound._variable, oldBound, newBound);
-                }
             }
         }
         else
         {
-            double oldBound = _boundManager.getUpperBound( bound._variable );
-            double newBound = bound._value;
             ENGINE_LOG(
                 Stringf( "x%u: upper bound set to %.3lf", variable, bound._value ).ascii() );
             if ( _produceUNSATProofs &&
@@ -2134,11 +2137,6 @@ void Engine::applySplit( const PiecewiseLinearCaseSplit &split )
             }
             else if ( !_produceUNSATProofs ){
                 _boundManager.tightenUpperBound( variable, bound._value );
-                if ( _incrementalMode )
-                {
-                    ASSERT( _dependencyAnalyzer )
-                    _dependencyAnalyzer->notifyUpperBoundUpdate(bound._variable, oldBound, newBound);
-                }
             }
         }
     }
@@ -4101,7 +4099,8 @@ Engine::analyseExplanationDependencies( const SparseUnsortedList &explanation,
 // --- incremental ---
 void Engine::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer ) 
 {
-    _dependencyAnalyzer = std::move( dependencyAnalyzer ); 
+    _dependencyAnalyzer = dependencyAnalyzer;
+
 }
 std::shared_ptr<DependencyAnalyzer> Engine::getDependencyAnalyzer() const 
 { 

@@ -165,7 +165,10 @@ class MarabouNetwork(InputQueryBuilder):
             base_ipq.setLowerBound(v, cover_lb[i])
             base_ipq.setUpperBound(v, cover_ub[i])
 
-        analyzer = MarabouCore.buildDependencyAnalyzer(base_ipq)
+        # analyzer = MarabouCore.buildDependencyAnalyzer(base_ipq)
+        all_lbs = self.incremental_input_lbs.tolist()   # shape (Q, n)
+        all_ubs = self.incremental_input_ubs.tolist()   # shape (Q, n)
+        analyzer = MarabouCore.buildDependencyAnalyzer(base_ipq, all_lbs, all_ubs)
 
         # --- 2) Build per-point IPQs (shared outputs; per-point input bounds)
         ipqs = self.getIncrementalInputQueries()

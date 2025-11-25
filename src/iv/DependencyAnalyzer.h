@@ -47,7 +47,10 @@ public:
             the pointed-to InputQuery outlives this analyzer, or that the
             analyzer doesn’t dereference it after destruction of the base.
     */
-    explicit DependencyAnalyzer( const InputQuery *baseIpq );
+    // explicit DependencyAnalyzer( const InputQuery *baseIpq ); // TODO: delete
+    DependencyAnalyzer( const InputQuery *baseIpq,
+                        const Vector<Vector<double>> &allLbs,
+                        const Vector<Vector<double>> &allUbs );
 
     ~DependencyAnalyzer();
     /*
@@ -169,7 +172,10 @@ public:
     void notifyUpperBoundUpdate( unsigned variable,
                                 double previousUpperBound,
                                 double newUpperBound );
-
+    /*
+      todo: add desciption.
+    */
+    void notifyQuerySolved();
 
     /**************** For Debugging ********************/
 
@@ -184,10 +190,27 @@ public:
 
 private:
     CVC4::context::Context *_context;
+
+    unsigned _numQueries;
+    unsigned _inputDim; // TODO: maybe we do not need it. check that
+    unsigned _nextQueryToSolve;
+
     /*
       Non-owning pointer to the base InputQuery provided by the builder
     */
-    const InputQuery *_baseIpq; // non-owning, read-only pointer (MVP)
+    const InputQuery *_baseIpq; // non-owning, read-only pointer (MVP) 
+    
+    /*
+      TODO: add decription. 
+    */
+    Vector<Vector<double>> _originalLbs;
+    Vector<Vector<double>> _originalUbs;
+
+    /*
+      TODO: add decription. 
+    */
+    Vector<double> _currentLb;
+    Vector<double> _currentUb;
 
     /*
       Preprocessed Query (owns the NLR); created in the .cpp
@@ -237,6 +260,29 @@ private:
     */
     void _addDependencyRuntimeState( DependencyState::DependencyId id,
                                     const Dependency &d );
+
+    /*
+      TODO: add decription. 
+    */
+    void _computeCoveringBoxFromRemainingQueries();
+
+    /*
+      TODO: add decription. 
+    */
+    unsigned _applyTighteningsToPreprocessedQuery( const List<Tightening> &tightenings );
+
+
+    /*
+      TODO: add decription. 
+    */
+    bool _isSubset( const Vector<double> &lbNew,
+                   const Vector<double> &ubNew,
+                   const Vector<double> &lbOld,
+                   const Vector<double> &ubOld ) const;
+
+    // void computeDependencies(); // TODO: we already have a similar functions, is this needed?
+
+
 };
 
 #endif // __DependencyAnalyzer_h__
