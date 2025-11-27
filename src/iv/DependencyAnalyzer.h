@@ -47,7 +47,6 @@ public:
             the pointed-to InputQuery outlives this analyzer, or that the
             analyzer doesn’t dereference it after destruction of the base.
     */
-    // explicit DependencyAnalyzer( const InputQuery *baseIpq ); // TODO: delete
     DependencyAnalyzer( const InputQuery *baseIpq,
                         const Vector<Vector<double>> &allLbs,
                         const Vector<Vector<double>> &allUbs );
@@ -93,6 +92,7 @@ public:
       Returns number of newly recorded conflicts.
     */
     unsigned computeSameLayerDependencies( unsigned weightedSumLayerIndex );
+    unsigned computeSameLayerDependencies(); //TODO: add description, this is for all the layers.
 
     /*
       Test a single pair (q,r) and record a conflict if one is found. Returns true iff a new conflict was added.
@@ -173,7 +173,17 @@ public:
                                 double previousUpperBound,
                                 double newUpperBound );
     /*
-      todo: add desciption.
+        Advance the analyzer to the next query in the schedule.
+
+        This method:
+          1. Increments _nextQueryToSolve.
+          2. Recomputes the covering input box over all remaining queries.
+          3. Generates tightenings for input variables whose bounds shrink.
+          4. Applies those tightenings to the preprocessed query.
+          5. Resets context-dependent runtime state (phases, dep states).
+
+        Called by Engine after each SAT/UNSAT/UNKNOWN result so that the
+        analyzer stays synchronized with the incremental solve cycle.
     */
     void notifyQuerySolved();
 
@@ -201,10 +211,16 @@ private:
     const InputQuery *_baseIpq; // non-owning, read-only pointer (MVP) 
     
     /*
-      TODO: add decription. 
+        Per-query input-domain bounds exactly as provided by Python.
+
+        _originalLbs[q][i] = lower bound of input dimension i for query q
+        _originalUbs[q][i] = upper bound of input dimension i for query q
+
+        These remain immutable and serve as the source from which covering
+        boxes are recomputed as queries are solved.
     */
-    Vector<Vector<double>> _originalLbs;
-    Vector<Vector<double>> _originalUbs;
+    const Vector<Vector<double>> _originalLbs;
+    const Vector<Vector<double>> _originalUbs;
 
     /*
       TODO: add decription. 
@@ -262,18 +278,40 @@ private:
                                     const Dependency &d );
 
     /*
-      TODO: add decription. 
+        Compute the covering input box for all *remaining* queries.
+
+        Using _nextQueryToSolve as the starting index, this recomputes:
+            _currentLb[x] = min originalLbs[q][x]
+            _currentUb[x] = max originalUbs[q][x]
+        over all q ≥ _nextQueryToSolve.
+
+        This shrinking box is used to tighten the input bounds of the
+        preprocessed query and guide dependency pruning.
     */
     void _computeCoveringBoxFromRemainingQueries();
 
     /*
-      TODO: add decription. 
+        Apply a collection of DeepPoly-proposed tightenings to the
+        preprocessed query.
+
+        For each Tightening t in `tightenings`, this updates the relevant
+        bound in _preprocessedQuery (LB or UB), counting how many bounds
+        were actually improved. This mirrors Engine’s bound-application
+        logic but operates on the analyzer’s internal preprocessed query.
+
+        Returns:
+            The number of bounds tightened.
     */
     unsigned _applyTighteningsToPreprocessedQuery( const List<Tightening> &tightenings );
 
 
     /*
-      TODO: add decription. 
+        Check whether the new input box [lbNew, ubNew] is a subset of
+        (i.e., tighter than) the previous box [lbOld, ubOld].
+
+        Returns true iff for every dimension x:
+            lbNew[x] >= lbOld[x]   and   ubNew[x] <= ubOld[x]
+        meaning the domain only shrank (never expanded).
     */
     bool _isSubset( const Vector<double> &lbNew,
                    const Vector<double> &ubNew,

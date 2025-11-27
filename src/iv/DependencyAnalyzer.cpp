@@ -93,35 +93,9 @@ void DependencyAnalyzer::setContext( CVC4::context::Context *ctx )
     unsigned numTightened = runBoundTightening();
     printf("[DA] DeepPoly tightening: %u tightenings\n", numTightened);
 
-    computeSameLayerDependencies(1);
-    computeSameLayerDependencies(3);
+    //TODO: notify about stable neurons, those neurons might activate dependencies learned from prevous query, when testing assert that the learned implcation -active or inactive- was not done to see if this works
 
-    ASSERT( _networkLevelReasoner );
-
-    const unsigned numLayers = _networkLevelReasoner->getNumberOfLayers();
-
-    printf("[DA][debug] computeDependencies: scanning %u layers for weighted-sum layers\n",
-           numLayers);
-
-    for ( unsigned layerIndex = 0; layerIndex < numLayers; ++layerIndex )
-    {
-        const NLR::Layer *layer = _networkLevelReasoner->getLayer( layerIndex );
-        if ( !layer )
-            continue;
-
-        const auto layerType = layer->getLayerType();
-
-        // Adjust the enum constant name to match your codebase if needed
-        if ( layerType == NLR::Layer::WEIGHTED_SUM ) //NLR::Layer::
-        {
-            printf("[DA][debug]   computing same-layer dependencies for weighted-sum layer %u\n",
-                   layerIndex);
-            computeSameLayerDependencies( layerIndex );
-        }
-    }
-
-    printf("[DA][debug] computeDependencies: done\n");
-
+    computeSameLayerDependencies();
 
     // (Re)build runtime states for all currently-known dependencies
     _dependencyStates.clear(); //TODO: asster this - done before 
@@ -139,6 +113,38 @@ void DependencyAnalyzer::setContext( CVC4::context::Context *ctx )
     _seenPhase = new (true) CVC4::context::CDHashMap<unsigned, ReLURuntimeState, std::hash<unsigned>> ( _context );
 }
 
+unsigned DependencyAnalyzer::computeSameLayerDependencies()
+{
+    ASSERT( _networkLevelReasoner );
+    
+    const unsigned numLayers = _networkLevelReasoner->getNumberOfLayers();
+    unsigned added = 0;
+    unsigned totalAdded = 0;
+
+    printf("[DA][debug] computeDependencies: scanning %u layers for weighted-sum layers\n",
+           numLayers);
+
+    for ( unsigned layerIndex = 0; layerIndex < numLayers; ++layerIndex )
+    {
+        const NLR::Layer *layer = _networkLevelReasoner->getLayer( layerIndex );
+        if ( !layer )
+            continue;
+
+        const auto layerType = layer->getLayerType();
+
+        // Adjust the enum constant name to match your codebase if needed
+        if ( layerType == NLR::Layer::WEIGHTED_SUM ) //NLR::Layer::
+        {
+            printf("[DA][debug]   computing same-layer dependencies for weighted-sum layer %u\n",
+                   layerIndex);
+            added = computeSameLayerDependencies( layerIndex );
+            totalAdded += added;
+        }
+    }
+
+    printf("[DA][debug] computeDependencies: done\n");
+    return totalAdded;
+}
 const InputQuery *DependencyAnalyzer::getBaseInputQuery() const
 {
     return _baseIpq;
@@ -254,6 +260,7 @@ void DependencyAnalyzer::collectUnstableNeurons( unsigned layerIndex,
             printf("[DA][warn] bound mismatch at layer %u neuron %u "
                 "(var %u): NLR [%.6g, %.6g] vs PQ [%.6g, %.6g]\n",
                 layerIndex, neuronIndex, v, nlrLb, nlrUb, pqLb, pqUb);
+            ASSERT( false );
         }
 
         //################### END DEBUGING ########################
