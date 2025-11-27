@@ -110,6 +110,8 @@ public:
                               unsigned q, unsigned r,
                               Dependency &outDependency );
 
+    bool _isSupersetOfKnownDependency(const std::vector<unsigned> &variables) const;
+
     /*
       Record a discovered dependency in the internal storage for its layer.
       Handles canonicalization and avoids duplicates.

@@ -19,6 +19,7 @@
 #include "Tightening.h"              // for Tightening
 #include "FloatUtils.h"              // for gt/lt comparisons
 #include "Layer.h"
+#include <unordered_set>
 
 DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq,
                                         const Vector<Vector<double>> &allLbs,
@@ -116,7 +117,7 @@ void DependencyAnalyzer::setContext( CVC4::context::Context *ctx )
 unsigned DependencyAnalyzer::computeSameLayerDependencies()
 {
     ASSERT( _networkLevelReasoner );
-    
+
     const unsigned numLayers = _networkLevelReasoner->getNumberOfLayers();
     unsigned added = 0;
     unsigned totalAdded = 0;
@@ -330,17 +331,20 @@ unsigned DependencyAnalyzer::computeSameLayerDependencies( unsigned weightedSumL
 bool DependencyAnalyzer::detectAndRecordPairConflict(unsigned layerIndex,
                                  unsigned q, unsigned r)
 {
+
+    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
+    unsigned varQ_ = weightedSumLayer->neuronToVariable( q );
+    unsigned varR_ = weightedSumLayer->neuronToVariable( r );
+    std::vector<unsigned> vars = { varQ_, varR_ };
+    if (_isSupersetOfKnownDependency(vars))
+        return false;
+
     Dependency d;
     if (!analyzePairConflict(layerIndex, q, r, d))
         return false;
     return recordConflict(std::move(d));
 }
 
-/*
-  Placeholder for analyzing a pair (q,r) of neurons in the same layer.
-  Later this will compute conditional intervals and determine whether
-  a dependency (forbidden combination) exists.
-*/
 bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
                                               unsigned q, unsigned r,
                                               Dependency &outDependency )
@@ -445,11 +449,72 @@ bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
     return true; // dependency found and written to outDependency
 }
 
-/*
-  Placeholder for recording a dependency in the internal storage.
-  Later this will insert into the per-layer dependency set/map,
-  handling canonicalization and duplicate detection.
-*/
+bool DependencyAnalyzer::_isSupersetOfKnownDependency(const std::vector<unsigned> &variables) const
+{
+    std::unordered_map<DependencyState::DependencyId, unsigned> dependencyOverlapCount;
+
+    printf("[DA] Checking if candidate with variables { ");
+    for (unsigned var : variables)
+        printf("%u ", var);
+    printf("} is a superset of any known dependency...\n");
+
+    for (unsigned variable : variables)
+    {
+        const auto activeIt = _watchActive.find(variable);
+        const auto inactiveIt = _watchInactive.find(variable);
+
+        // Optional sanity check: ensure no overlap between active and inactive watchers
+        if (activeIt != _watchActive.end() && inactiveIt != _watchInactive.end())
+        {
+            const auto &activeList = activeIt->second;
+            const auto &inactiveList = inactiveIt->second;
+
+            std::unordered_set<DependencyState::DependencyId> activeSet(activeList.begin(), activeList.end());
+            for (DependencyState::DependencyId depId : inactiveList)
+            {
+                ASSERT(activeSet.find(depId) == activeSet.end());
+            }
+        }
+        //TODO: delete this check before release
+
+        if (activeIt != _watchActive.end())
+        {
+            printf("[DA] Variable %u has %u active dependencies\n", variable, activeIt->second.size());
+            for (DependencyState::DependencyId depId : activeIt->second)
+            {
+                ++dependencyOverlapCount[depId];
+                printf("    [DA] Active dep %u now has count %u\n", depId, dependencyOverlapCount[depId]);
+            }
+        }
+
+        if (inactiveIt != _watchInactive.end())
+        {
+            printf("[DA] Variable %u has %u inactive dependencies\n", variable, inactiveIt->second.size());
+            for (DependencyState::DependencyId depId : inactiveIt->second)
+            {
+                ++dependencyOverlapCount[depId];
+                printf("    [DA] Inactive dep %u now has count %u\n", depId, dependencyOverlapCount[depId]);
+            }
+        }
+    }
+
+    for (const auto &[depId, count] : dependencyOverlapCount)
+    {
+        unsigned depSize = _dependencies[depId].size();
+        printf("[DA] Checking dep %u: count %u vs size %u\n", depId, count, depSize);
+        if (count == depSize)
+        {
+            printf("[DA] → Candidate is a superset of known dependency %u, skipping.\n", depId);
+            return true;
+        }
+    }
+
+    printf("[DA] → Candidate is not a superset of any known dependency.\n");
+    return false;
+}
+
+
+
 bool DependencyAnalyzer::recordConflict( Dependency d )
 {
     // --- Basic sanity checks ---
@@ -466,12 +531,8 @@ bool DependencyAnalyzer::recordConflict( Dependency d )
         ASSERT( vars[i - 1] < vars[i] );  // must be strictly ascending
     }
     // --- Debug-only duplicate assertion ---
-    // ASSERT( _dependencyIndex.find( d ) == _dependencyIndex.end() );  // should not already exist
-    if ( _dependencyIndex.find( d ) != _dependencyIndex.end() )  // should not already exist
-    {
-        printf("[DA][recordConflict] dependency already exists - skipping.\n");
-        return false; // this might happen when we are looking for a dependecies in the next strictier query - we might find dependencies that we found before, for now we will skip them, later TODO: check if ddependcies exist before moving to checking/examining it.
-    }
+    ASSERT( _dependencyIndex.find( d ) == _dependencyIndex.end() );  // should not already exist
+
     // --- Store dependency & create runtime state ---
     const DependencyState::DependencyId id = _addDependency( d );
     if ( _context )
