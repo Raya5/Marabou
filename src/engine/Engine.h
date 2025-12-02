@@ -319,6 +319,19 @@ public:
     // --- incremental ---
     void setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer );
     std::shared_ptr<DependencyAnalyzer> getDependencyAnalyzer() const;
+    
+    /*
+      Ask the DependencyAnalyzer for implied tightenings (from active dependencies)
+      and apply them to the current Engine bounds via BoundManager.
+
+      Preconditions:
+        - _incrementalMode is true
+        - _dependencyAnalyzer is non-null
+        - We are using the NATIVE LP solver (for now)
+        - Incremental mode is not combined with _produceUNSATProofs
+    */
+    void applyDependencyAnalyzerTightenings();
+
 
 private:
     enum BasisRestorationRequired {

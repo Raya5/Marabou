@@ -200,6 +200,12 @@ bool Engine::solve( double timeoutInSeconds )
         ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
         printf( "[Engine] Context to be set in analyzer.\n" );
         _dependencyAnalyzer->setContext( &_context);
+
+       // Sync DA with Engine's preprocessed query
+       ASSERT( _preprocessedQuery );
+       printf( "[Engine][IV] syncing DA with Engine preprocessed query\n" );
+       _dependencyAnalyzer->syncWithEnginePreprocessedQuery( *_preprocessedQuery );
+
         _boundManager.setDependencyAnalyzer( _dependencyAnalyzer );
     } else if ( Options::get()->getBool( Options::INCREMENTAL_MODE ) ) {
         printf( "[Engine] Incremental mode enabled (no analyzer attached)\n" );
@@ -304,6 +310,15 @@ bool Engine::solve( double timeoutInSeconds )
                 if ( _tableau->basisMatrixAvailable() )
                 {
                     explicitBasisBoundTightening();
+                    // DA hook
+                    if ( _incrementalMode )
+                    {
+                        double lbr = _preprocessedQuery->getLowerBound( 797 );
+                        double ubr = _preprocessedQuery->getUpperBound( 797 );
+                        printf("[Engine][debug] 797 bounds: [%.10g, %.10g]\n", lbr, ubr);
+                        printf("[Engine][IV] Basis-phase → applyDependencyAnalyzerTightenings()\n");
+                        applyDependencyAnalyzerTightenings();
+                    }
                     _boundManager.propagateTightenings();
                     applyAllValidConstraintCaseSplits();
                 }
@@ -313,6 +328,13 @@ bool Engine::solve( double timeoutInSeconds )
             if ( splitJustPerformed )
             {
                 performBoundTighteningAfterCaseSplit();
+                // DA hook
+                if ( _incrementalMode )
+                {
+                    printf("[Engine][IV] After-split phase → applyDependencyAnalyzerTightenings()\n");
+                    applyDependencyAnalyzerTightenings();
+                }
+
                 printf("********* Starting IV *********\n");
                 // call dependency analysis
                 informLPSolverOfBounds();
@@ -1989,6 +2011,8 @@ bool Engine::attemptToMergeVariables( unsigned x1, unsigned x2 )
 
     // Both variables are now non-basic, so we can merge their columns
     _tableau->mergeColumns( x1, x2 );
+    printf("[Engine][merge] mergeColumns: x%u <- x%u\n", x1, x2);
+
     DEBUG( _tableau->verifyInvariants() );
 
     // Reset the entry strategy
@@ -4105,4 +4129,71 @@ void Engine::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependen
 std::shared_ptr<DependencyAnalyzer> Engine::getDependencyAnalyzer() const 
 { 
     return _dependencyAnalyzer; 
+}
+
+void Engine::applyDependencyAnalyzerTightenings()
+{
+    ASSERT( _incrementalMode );
+    ASSERT( _dependencyAnalyzer );
+    ASSERT( _lpSolverType == LPSolverType::NATIVE || _lpSolverType == LPSolverType::GUROBI  );
+    ASSERT( !_produceUNSATProofs ); // incremental and UNSAT proofs assumed mutually exclusive
+
+    List<Tightening> tightenings;
+    _dependencyAnalyzer->getImpliedTightenings( tightenings );
+
+    if ( tightenings.empty() )
+    {
+        printf( "[Engine][IV] applyDependencyAnalyzerTightenings: no tightenings\n" );
+        return;
+    }
+
+    printf( "[Engine][IV] applyDependencyAnalyzerTightenings: %u tightenings\n",
+            tightenings.size() );
+
+    for ( const auto &tightening : tightenings )
+    {
+        const unsigned originalVar = tightening._variable;
+        const unsigned mergedVar   = _tableau->getVariableAfterMerging( originalVar );
+
+        const double currentLb = _boundManager.getLowerBound( originalVar );
+        const double currentUb = _boundManager.getUpperBound( originalVar );
+
+        if ( tightening._type == Tightening::LB )
+        {
+            const double newLb = tightening._value;
+
+            printf( "[Engine][IV] DA tightening: x%u (orig %u) LB: %.10g -> %.10g "
+                    "(UB = %.10g)\n",
+                    mergedVar, originalVar,
+                    currentLb, newLb, currentUb );
+
+            // Safety: new LB must not exceed current UB
+            ASSERT( !FloatUtils::gt( newLb, currentUb ) );
+            // Must be a *strict* strengthening (DA should not emit non-strengthening LBs)
+            ASSERT( !FloatUtils::lt( newLb, currentLb ) );
+
+            _boundManager.tightenLowerBound( mergedVar, newLb );
+        }
+        else if ( tightening._type == Tightening::UB )
+        {
+            const double newUb = tightening._value;
+
+            printf( "[Engine][IV] DA tightening: x%u (orig %u) UB: %.10g -> %.10g "
+                    "(LB = %.10g)\n",
+                    mergedVar, originalVar,
+                    currentUb, newUb, currentLb );
+
+            // Safety: new UB must not go below current LB
+            ASSERT( !FloatUtils::lt( newUb, currentLb ) );
+            // Must be a strengthening (DA should not emit non-strengthening UBs)
+            ASSERT( !FloatUtils::gt( newUb, currentUb ) );
+        
+            _boundManager.tightenUpperBound( mergedVar, newUb );
+        }
+        else
+        {
+            // Tightening type must be LB or UB
+            ASSERT( false );
+        }
+    }
 }

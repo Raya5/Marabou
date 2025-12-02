@@ -189,6 +189,25 @@ public:
     */
     void notifyQuerySolved();
 
+
+    /*
+        Add description. 
+    */
+    void getImpliedTightenings( List<Tightening> &tightenings );
+
+    /*
+      Synchronize unstable neurons with the Engine's preprocessed query.
+
+      For each var in _unstableNeurons, read its bounds from engineQuery:
+        - if lb >= 0 ⇒ notifyLowerBoundUpdate(var, -inf, lb) ⇒ Active
+        - else if ub <= 0 ⇒ notifyUpperBoundUpdate(var, +inf, ub) ⇒ Inactive
+
+      This allows the analyzer to learn about neurons that are already stable
+      in the Engine's view at the beginning of the solve.
+    */
+    void syncWithEnginePreprocessedQuery( const Query &engineQuery );
+
+
     /**************** For Debugging ********************/
 
     BoundsSnapshot snapshotBounds(const std::vector<unsigned> &vars = {});
@@ -250,6 +269,10 @@ private:
     std::unordered_map<unsigned, Vector<DependencyState::DependencyId>> _watchInactive;  // Dependencies containing (var, Inactive)
 
     Vector<DependencyState::DependencyId> _activeDepIds;
+
+    // List of pre-activation variables that are unstable (lb < 0 < ub)
+    // at the initial covering box / DeepPoly run.
+    std::vector<unsigned> _unstableNeurons;    
     
     /**************** For Debugging ********************/
     /*
@@ -320,7 +343,17 @@ private:
                    const Vector<double> &lbOld,
                    const Vector<double> &ubOld ) const;
 
-    // void computeDependencies(); // TODO: we already have a similar functions, is this needed?
+    /*
+      Scan all WEIGHTED_SUM layers in the NLR, collect indices of unstable
+      neurons, and store their variable IDs in _unstableNeurons.
+    */
+    void _collectAllUnstableNeurons();
+    
+    /*
+      Check whether a given variable id belongs to the unstable set.
+    */
+    bool _isUnstableVar( unsigned var ) const;
+
 
 
 };

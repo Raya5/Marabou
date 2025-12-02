@@ -20,6 +20,7 @@
 #include "FloatUtils.h"              // for gt/lt comparisons
 #include "Layer.h"
 #include <unordered_set>
+#include <algorithm>
 
 DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq,
                                         const Vector<Vector<double>> &allLbs,
@@ -49,6 +50,7 @@ DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq,
         _baseIpq->getNumberOfVariables(),
         _baseIpq->getNumberOfEquations());
 
+    _collectAllUnstableNeurons();
 }
 
 void DependencyAnalyzer::buildFromBase()
@@ -644,6 +646,47 @@ void DependencyAnalyzer::_sliceMinMax_givenOtherZero( const Vector<double> &w_t,
 bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
 {
     ASSERT( _seenPhase );
+
+    // Allow: (1) originally unstable vars, OR
+    //        (2) stable var that become exactly at zero.
+    //
+    // Case (2):
+    //    state = Inactive  AND ub == 0
+    //    state = Active    AND lb == 0
+    //
+    double lb = _preprocessedQuery->getLowerBound( var );
+    double ub = _preprocessedQuery->getUpperBound( var );
+
+    bool originallyUnstable = _isUnstableVar( var );
+
+    printf(
+        "[DA][debug] notifyNeuronFixed(var=%u, state=%s) "
+        "inactive&lb==0=%d  active&ub==0=%d  originallyUnstable=%d  bounds=[%.10g, %.10g]\n",
+        var,
+        (state == ReLUState::Inactive ? "Inactive" : "Active"),
+        ( state == ReLUState::Inactive && FloatUtils::isZero( lb ) ),
+        ( state == ReLUState::Active   && FloatUtils::isZero( ub ) ),
+        originallyUnstable,
+        lb, ub
+    );
+
+    bool allowed =
+           originallyUnstable
+        || ( state == ReLUState::Inactive && FloatUtils::isZero( lb ) )
+        || ( state == ReLUState::Active   && FloatUtils::isZero( ub ) );
+
+    if ( !allowed ) // TOOD: turn into assertion
+    {
+        printf(
+            "[DA][warn] notifyNeuronFixed on var=%u, state=%s but var is not in "
+            "_unstableNeurons and not a zero-edge case. bounds=[%.10g, %.10g]\n",
+            var,
+            (state == ReLUState::Inactive ? "Inactive" : "Active"),
+            lb, ub
+        );
+        // Do NOT assert here for now; just let it continue.
+    }
+
     // Map ReLUState -> runtime state enum
     const ReLURuntimeState incoming =
         ( state == ReLUState::Active ) ? ReLURuntimeState::Active
@@ -676,18 +719,41 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
     }
     /**************** End Debug ****************/
 
-    // Pick the watched bucket (don’t create if missing)
-    const auto &watchMap = ( state == ReLUState::Active ) ? _watchActive : _watchInactive;
-    auto it = watchMap.find( var );
-    if ( it == watchMap.end() )
+    Vector<DependencyState::DependencyId> depsToUpdate;
+
+    // Add watchers for (var, Active)
     {
-        // No dependencies watch this literal — nothing to do
-        printf("[DA][debug] No dependencies watch this literal %u — nothing to do.\n", var);
+        auto itA = _watchActive.find( var );
+        if ( itA != _watchActive.end() )
+        {
+            const auto &vecA = itA->second;
+            for ( unsigned i = 0; i < vecA.size(); ++i )
+                depsToUpdate.append( vecA[i] );
+        }
+    }
+
+    // Add watchers for (var, Inactive)
+    {
+        auto itI = _watchInactive.find( var );
+        if ( itI != _watchInactive.end() )
+        {
+            const auto &vecI = itI->second;
+            for ( unsigned i = 0; i < vecI.size(); ++i )
+                depsToUpdate.append( vecI[i] );
+        }
+    }
+
+    if ( depsToUpdate.empty() )
+    {
+        printf("[DA][debug] No dependencies watch var %u (either phase)\n", var);
         return false;
     }
-    printf("[DA][debug] this literal %u is watched.\n", var);
+
+    printf("[DA][debug] var %u is watched by %u dependencies\n",
+        var, depsToUpdate.size());
+
     // IDs of dependencies that contain literal (var, state)
-    const Vector<DependencyState::DependencyId> &depIds = it->second;
+    const Vector<DependencyState::DependencyId> &depIds = depsToUpdate;
     bool foundDep = false;
 
     // Update runtime states for all dependencies watching (var, state)
@@ -725,8 +791,21 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
         {
             // For now we just record that this dependency is “active”;
             // later we can also store (impliedVar, impliedPhase) somewhere.
-            _activeDepIds.append( depId );
-            foundDep = true;
+            // TODO: check that it is not in _activeDepIds before appending
+
+            // Add depId only if not already present
+            if ( std::find( _activeDepIds.begin(), _activeDepIds.end(), depId )
+                == _activeDepIds.end() )
+            {
+                _activeDepIds.append( depId );
+                foundDep = true;
+                printf("[DA] Dep %u added to _activeDepIds\n", depId);
+            }
+            else
+            {
+                continue;
+                printf("[DA] Dep %u already present in _activeDepIds, skipping\n", depId);
+            }
 
             // Optional debug:
             printf("[DA] Dep %u implies var %u must be %s\n",
@@ -824,7 +903,6 @@ void DependencyAnalyzer::_addDependencyRuntimeState( DependencyState::Dependency
 }
 
 
-// TODO: implement
 void DependencyAnalyzer::_computeCoveringBoxFromRemainingQueries()
 {
     ASSERT( _nextQueryToSolve < _numQueries );
@@ -877,7 +955,7 @@ void DependencyAnalyzer::notifyQuerySolved()
     _computeCoveringBoxFromRemainingQueries();
 
     // === Debug info ===
-    // printf("[DA][debug] notifyQuerySolved(): tightening input domain\n");
+    printf("[DA][debug] notifyQuerySolved(): tightening input domain\n");
 
     // unsigned changedCount = 0;
     // double maxDelta = 0.0;
@@ -908,9 +986,6 @@ void DependencyAnalyzer::notifyQuerySolved()
     // printf("[DA][debug]   total changed dims = %u / %u, max change = %.6f\n",
     //        changedCount, _inputDim, maxDelta);
     // === End of Debug info ===
-    
-    ASSERT( _isSubset( _currentLb, _currentUb, oldLb, oldUb ) );
-
 
     // --- Build tightenings for input variables based on the new covering box
     List<Tightening> inputTightenings;
@@ -957,13 +1032,218 @@ void DependencyAnalyzer::notifyQuerySolved()
     {
         printf("[DA][debug]   no input tightenings to apply after notifyQuerySolved()\n");
     }
-
+    ASSERT( _isSubset( _currentLb, _currentUb, oldLb, oldUb ) );
     _context = nullptr;
     _seenPhase = nullptr;
     _dependencyStates.clear();
 
     // computeDependencies(); # todo in the setcontex
 }
+
+void DependencyAnalyzer::getImpliedTightenings( List<Tightening> &tightenings )
+{
+    // Caller should pass an empty list; we only append.
+    // Preconditions: setContext() was called, so these should be valid.
+    ASSERT( _context );
+    ASSERT( _preprocessedQuery );
+    ASSERT( _networkLevelReasoner );
+
+    if ( _activeDepIds.empty() )
+    {
+        printf("[DA][getImpliedTightenings] no active dependencies\n");
+        return;
+    }
+
+    printf("[DA][getImpliedTightenings] processing %u active dependencies\n",
+           _activeDepIds.size());
+
+    for ( unsigned idx = 0; idx < _activeDepIds.size(); ++idx )
+    {
+        const DependencyState::DependencyId depId = _activeDepIds[idx];
+
+        ASSERT( depId < _dependencies.size() );
+        ASSERT( depId < _dependencyStates.size() );
+
+        const Dependency &dep      = _dependencies[depId];
+        DependencyState  &depState = _dependencyStates[depId];
+
+        unsigned  impliedVar   = 0;
+        ReLUState impliedPhase = ReLUState::Active; // will be overwritten
+
+        bool hasImplication = depState.checkImplication( dep, impliedVar, impliedPhase );
+        // By design, any depId in _activeDepIds must imply something.
+        if( !hasImplication ) continue;
+
+        double lb = _preprocessedQuery->getLowerBound( impliedVar );
+        double ub = _preprocessedQuery->getUpperBound( impliedVar );
+
+        printf("[DA][getImpliedTightenings] dep %u implies var %u must be %s "
+               "(current bounds: [%.10g, %.10g])\n",
+               depId,
+               impliedVar,
+               ( impliedPhase == ReLUState::Active ? "Active" : "Inactive" ),
+               lb, ub );
+
+        if ( impliedPhase == ReLUState::Active )
+        {
+            // Active ⇒ pre-activation >= 0
+            const double newLb = 0.0;
+
+            // Safety: new LB cannot exceed current UB
+            ASSERT( !FloatUtils::gt( newLb, ub ) );
+            ASSERT( FloatUtils::gt( newLb, lb ) );
+
+            // If this does not strengthen the LB, skip emitting a tightening
+            if ( !FloatUtils::gt( newLb, lb ) )
+            {
+                printf("[DA][getImpliedTightenings]   skip: LB already >= 0 for var %u\n",
+                       impliedVar );
+                continue;
+            }
+
+            Tightening t( impliedVar, newLb, Tightening::LB );
+            tightenings.append( t );
+
+            printf("[DA][getImpliedTightenings]   -> emit LB tightening: x%u >= %.10g\n",
+                   impliedVar, newLb );
+        }
+        else
+        {
+            // impliedPhase == ReLUState::Inactive
+            ASSERT( impliedPhase == ReLUState::Inactive );
+            const double newUb = 0.0;
+
+            // Safety: new UB cannot go below current LB
+            ASSERT( !FloatUtils::lt( newUb, lb ) );
+            ASSERT( FloatUtils::lt( newUb, ub ) );
+
+            // If this does not strengthen the UB, skip
+            if ( !FloatUtils::lt( newUb, ub ) )
+            {
+                printf("[DA][getImpliedTightenings]   skip: UB already <= 0 for var %u\n",
+                       impliedVar );
+                continue;
+            }
+
+            Tightening t( impliedVar, newUb, Tightening::UB );
+            tightenings.append( t );
+
+            printf("[DA][getImpliedTightenings]   -> emit UB tightening: x%u <= %.10g\n",
+                   impliedVar, newUb );
+        }
+    }
+
+    // Simple initial policy: after we’ve emitted tightenings for all active deps,
+    // clear the list. New notifications will repopulate _activeDepIds.
+    _activeDepIds.clear();
+    printf("[DA][getImpliedTightenings] done, emitted %u tightenings\n",
+           tightenings.size());
+}
+
+void DependencyAnalyzer::_collectAllUnstableNeurons()
+{
+    _unstableNeurons.clear();
+
+    if ( !_networkLevelReasoner )
+    {
+        printf("[DA][_collectAllUnstableNeurons] NLR not set\n");
+        return;
+    }
+
+    // Ensure NLR bounds are synced with the preprocessed query
+    _networkLevelReasoner->obtainCurrentBounds( *_preprocessedQuery );
+
+    const unsigned numLayers = _networkLevelReasoner->getNumberOfLayers();
+    printf("[DA][_collectAllUnstableNeurons] scanning %u layers for unstable neurons\n",
+           numLayers);
+
+    for ( unsigned layerIndex = 0; layerIndex < numLayers; ++layerIndex )
+    {
+        const NLR::Layer *layer = _networkLevelReasoner->getLayer( layerIndex );
+        if ( !layer )
+            continue;
+
+        const auto layerType = layer->getLayerType();
+
+        if ( layerType == NLR::Layer::WEIGHTED_SUM )
+        {
+            printf("[DA][_collectAllUnstableNeurons]   layer %u is WEIGHTED_SUM\n",
+                   layerIndex);
+
+            std::vector<unsigned> unstableIndices;
+            collectUnstableNeurons( layerIndex, unstableIndices );
+
+            for ( unsigned neuronIndex : unstableIndices )
+            {
+                unsigned var = layer->neuronToVariable( neuronIndex );
+                _unstableNeurons.push_back( var );
+            }
+        }
+    }
+
+    // Optional: deduplicate and sort
+    std::sort( _unstableNeurons.begin(), _unstableNeurons.end() );
+    _unstableNeurons.erase(
+        std::unique( _unstableNeurons.begin(), _unstableNeurons.end() ),
+        _unstableNeurons.end()
+    );
+
+    printf("[DA][_collectAllUnstableNeurons] total unstable vars = %zu\n",
+           _unstableNeurons.size());
+}
+
+bool DependencyAnalyzer::_isUnstableVar( unsigned var ) const
+{
+    return std::binary_search( _unstableNeurons.begin(),
+                               _unstableNeurons.end(),
+                               var );
+}
+
+void DependencyAnalyzer::syncWithEnginePreprocessedQuery( const Query &engineQuery )
+{
+    ASSERT( _preprocessedQuery );
+    ASSERT( _networkLevelReasoner );
+    ASSERT( _context ); // setContext must have been called
+
+    if ( _unstableNeurons.empty() )
+    {
+        printf("[DA][syncWithEnginePreprocessedQuery] no unstable neurons recorded\n");
+        return;
+    }
+
+    printf("[DA][syncWithEnginePreprocessedQuery] syncing %zu unstable vars with Engine PQ\n",
+           _unstableNeurons.size());
+
+    for ( unsigned var : _unstableNeurons )
+    {
+        // Bounds from the Engine's preprocessed query
+        const double lb = engineQuery.getLowerBound( var );
+        const double ub = engineQuery.getUpperBound( var );
+
+        printf("[DA][sync] var %u has Engine bounds [%.10g, %.10g]\n", var, lb, ub);
+
+        // Already guaranteed Active?
+        if ( !FloatUtils::lt( lb, 0.0 ) )
+        {
+            printf("[DA][sync] var %u is already Active (lb >= 0), notifying LB update\n", var);
+            // Use -INFINITY as previous lower bound to force a "crossing zero" event
+            notifyLowerBoundUpdate( var, -INFINITY, lb );
+        }
+        // Already guaranteed Inactive?
+        else if ( !FloatUtils::gt( ub, 0.0 ) )
+        {
+            printf("[DA][sync] var %u is already Inactive (ub <= 0), notifying UB update\n", var);
+            // Use +INFINITY as previous upper bound to force a "crossing zero" event
+            notifyUpperBoundUpdate( var, +INFINITY, ub );
+        }
+        else
+        {
+            // Still unstable in Engine's view; do nothing now.
+            printf("[DA][sync] var %u remains unstable in Engine PQ\n", var);
+        }
+    }
+}
+
 
 
 

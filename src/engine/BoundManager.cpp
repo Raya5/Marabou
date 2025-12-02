@@ -167,14 +167,15 @@ bool BoundManager::tightenLowerBound( unsigned variable, double value )
 bool BoundManager::tightenUpperBound( unsigned variable, double value )
 {
     double oldUb = getUpperBound( variable );
+    double oldLb = getLowerBound( variable );
     bool tightened = setUpperBound( variable, value );
 
     if ( tightened )
     {
         if ( _dependencyAnalyzer )
         {
-            printf( "[BM][debug] tightenUpperBound: var %u, UB %.6f -> %.6f\n",
-                    variable, oldUb, value );
+            printf( "[BM][debug] tightenUpperBound: var %u, UB %.6f -> %.6f (LB %.6f)\n",
+                    variable, oldUb, value, oldLb );
             _dependencyAnalyzer->notifyUpperBoundUpdate( variable, oldUb, value );
         }
 

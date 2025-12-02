@@ -2581,6 +2581,7 @@ void Tableau::mergeColumns( unsigned x1, unsigned x2 )
 {
     ASSERT( !isBasic( x1 ) );
     ASSERT( !isBasic( x2 ) );
+    printf("[Tableau][merge] mergeColumns: x%u <- x%u\n", x1, x2);
 
     /*
       If x2 has tighter bounds than x1, adjust the bounds

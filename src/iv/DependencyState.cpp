@@ -81,6 +81,27 @@ bool DependencyState::checkImplication( const Dependency &dep,
     unsigned matched = 0, contradicted = 0, unset = 0;
     int lastUnsetIdx = -1;
 
+    printf("[DA][dep %u] checkImplication\n", _depId);
+    printf("   literals: ");
+    for ( unsigned i = 0; i < vars.size(); ++i )
+    {
+        printf("(%u,%s) ",
+            vars[i],
+            (phases[i] == ReLUState::Active ? "A" : "I"));
+    }
+    printf("\n   runtime:  ");
+
+    for ( unsigned i = 0; i < vars.size(); ++i )
+    {
+        ReLURuntimeState rt = getLiteralState( i );
+        const char *rtStr =
+            (rt == ReLURuntimeState::Active)   ? "A" :
+            (rt == ReLURuntimeState::Inactive) ? "I" :
+                                                 "U";  // Unstable
+        printf("[%s] ", rtStr);
+    }
+    printf("\n");
+
     for ( unsigned i = 0; i < vars.size(); ++i )
     {
         const ReLURuntimeState rt = getLiteralState( i );
@@ -104,15 +125,25 @@ bool DependencyState::checkImplication( const Dependency &dep,
 
     ASSERT( matched + contradicted + unset == dep.size() );
 
+    printf("   counts: matched=%u contradicted=%u unset=%u\n",
+           matched, contradicted, unset);
+
     // One-away nogood: exactly one literal unset, none contradicted
     if ( contradicted == 0 && unset == 1 )
     {
         ASSERT( lastUnsetIdx >= 0 );
         outVar   = vars[ lastUnsetIdx ];
         outPhase = negatePhase( phases[ lastUnsetIdx ] ); // opposite to nogood polarity
+
+        printf("   ==> implication: var=%u must be %s\n",
+               outVar,
+               (outPhase == ReLUState::Active ? "Active" : "Inactive"));
+
         return true;
     }
 
+    printf("   ==> no implication\n");
     return false;
 }
+
 
