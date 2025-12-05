@@ -830,7 +830,12 @@ void Preprocessor::eliminateVariables()
             ++offset;
         }
         else
-            _oldIndexToNewIndex[i] = i - offset;
+        {
+            unsigned oldIdx = i;
+            unsigned newIdx = i - offset;
+            _oldIndexToNewIndex[oldIdx] = newIdx;
+            _newIndexToOldIndex[newIdx] = oldIdx;
+        }
     }
 
     // Next, eliminate the fixed variables from the equations
@@ -1004,6 +1009,7 @@ void Preprocessor::eliminateVariables()
     }
 
     // Adjust the number of variables in the query
+    printf("[Debug][Preprocessor] numEliminated: %d\n", numEliminated);
     _preprocessed->setNumberOfVariables( _preprocessed->getNumberOfVariables() - numEliminated );
 
     // Adjust the input/output mappings in the query
@@ -1041,6 +1047,15 @@ unsigned Preprocessor::getNewIndex( unsigned oldIndex ) const
         return _oldIndexToNewIndex.at( oldIndex );
 
     return oldIndex;
+}
+
+unsigned Preprocessor::getOldIndex( unsigned newIndex ) const
+{
+    if ( _newIndexToOldIndex.exists( newIndex ) )
+        return _newIndexToOldIndex.at( newIndex );
+
+    // If no preprocessing changed indices, fall back to identity
+    return newIndex;
 }
 
 void Preprocessor::setStatistics( Statistics *statistics )

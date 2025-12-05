@@ -200,6 +200,7 @@ bool Engine::solve( double timeoutInSeconds )
         ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
         printf( "[Engine] Context to be set in analyzer.\n" );
         _dependencyAnalyzer->setContext( &_context);
+        _dependencyAnalyzer->setPreprocessor( &_preprocessor);
 
        // Sync DA with Engine's preprocessed query
        ASSERT( _preprocessedQuery );

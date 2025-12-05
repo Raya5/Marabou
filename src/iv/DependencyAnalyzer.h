@@ -28,6 +28,8 @@
 #include "DependencyState.h"
 #include "context/cdo.h"
 #include "context/context.h"
+#include "Preprocessor.h"
+
 
 // #include <memory>
 
@@ -64,6 +66,11 @@ public:
       engine context is available.
     */
     void setContext( CVC4::context::Context *ctx );
+
+    /*
+      TODO
+    */
+    void setPreprocessor( Preprocessor *preprocessor );
 
     /*
       Accessor for the stored base InputQuery pointer (may be nullptr).
@@ -155,14 +162,14 @@ public:
       This updates the runtime state for all dependencies that include
       the literal (var = state). It does not yet trigger propagation.
     */
-    bool notifyNeuronFixed( unsigned var, ReLUState state );
+    bool notifyNeuronFixed( unsigned newVar, ReLUState state );
 
     /*
       Notify the DependencyAnalyzer that the lower bound of a pre-activation variable
       has been updated. If this tightening crosses zero (i.e., newLowerBound > 0),
       the neuron is fixed to the Active phase.
     */
-    void notifyLowerBoundUpdate( unsigned variable,
+    void notifyLowerBoundUpdate( unsigned newVar,
                                 double previousLowerBound,
                                 double newLowerBound );
 
@@ -171,7 +178,7 @@ public:
       has been updated. If this tightening crosses zero (i.e., newUpperBound < 0),
       the neuron is fixed to the Inactive phase.
     */
-    void notifyUpperBoundUpdate( unsigned variable,
+    void notifyUpperBoundUpdate( unsigned newVar,
                                 double previousUpperBound,
                                 double newUpperBound );
     /*
@@ -221,15 +228,21 @@ public:
 
 private:
     CVC4::context::Context *_context;
-
+    
     unsigned _numQueries;
     unsigned _inputDim; // TODO: maybe we do not need it. check that
     unsigned _nextQueryToSolve;
-
+    
+    /*
+      TODO;
+    */
+    Preprocessor *_preprocessor;
+    
     /*
       Non-owning pointer to the base InputQuery provided by the builder
     */
     const InputQuery *_baseIpq; // non-owning, read-only pointer (MVP) 
+    Preprocessor _baseIpqPreprocessor; 
     
     /*
         Per-query input-domain bounds exactly as provided by Python.

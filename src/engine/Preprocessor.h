@@ -65,6 +65,11 @@ public:
     unsigned getNewIndex( unsigned oldIndex ) const;
 
     /*
+      Obtain the old index of a variable.
+    */
+    unsigned getOldIndex( unsigned newIndex ) const;
+
+    /*
       Given an inputQuery with all variable assignment other than ones for
       variables corresponding to eliminated neurons, compute the full
       assignment.
@@ -198,7 +203,13 @@ private:
       Mapping of old variable indices to new varibale indices, if
       indices were changed during preprocessing.
     */
-    Map<unsigned, unsigned> _oldIndexToNewIndex;
+    Map<unsigned, unsigned> _oldIndexToNewIndex; 
+    
+    /*
+      Mapping of new variable indices back to original indices.
+      Populated in eliminateVariables().
+    */
+    Map<unsigned, unsigned> _newIndexToOldIndex;
 
     /*
       For debugging only

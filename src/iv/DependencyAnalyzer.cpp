@@ -43,6 +43,7 @@ DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq,
     _computeCoveringBoxFromRemainingQueries();
 
     _context = nullptr;
+    _preprocessor = nullptr;
     _seenPhase = nullptr;
 
     buildFromBase();
@@ -63,10 +64,8 @@ void DependencyAnalyzer::buildFromBase()
             
     }
 
-    Preprocessor preprocessor;
-
     // preprocess returns std::unique_ptr<Query>; assign/move it directly
-    _preprocessedQuery = preprocessor.preprocess(
+    _preprocessedQuery = _baseIpqPreprocessor.preprocess(
         *_baseIpq, GlobalConfiguration::PREPROCESSOR_ELIMINATE_VARIABLES );
 
 
@@ -81,8 +80,6 @@ void DependencyAnalyzer::buildFromBase()
                             "Preprocessing failed: NetworkLevelReasoner is null." );
     }
     _networkLevelReasoner->computeSuccessorLayers();
-    // (no tableau hookup, no dumps)
-    // debugdiff()
 }
 
 DependencyAnalyzer::~DependencyAnalyzer() = default;
@@ -114,6 +111,10 @@ void DependencyAnalyzer::setContext( CVC4::context::Context *ctx )
 
     // Build context-dependent seen-phase map
     _seenPhase = new (true) CVC4::context::CDHashMap<unsigned, ReLURuntimeState, std::hash<unsigned>> ( _context );
+}
+void DependencyAnalyzer::setPreprocessor( Preprocessor *preprocessor )
+{
+    _preprocessor = preprocessor;
 }
 
 unsigned DependencyAnalyzer::computeSameLayerDependencies()
@@ -249,20 +250,21 @@ void DependencyAnalyzer::collectUnstableNeurons( unsigned layerIndex,
         double lowerPreActivation = weightedSumLayer->getLb( neuronIndex );
         double upperPreActivation = weightedSumLayer->getUb( neuronIndex );
         //################### FOR DEBUGING ########################
-        unsigned v = weightedSumLayer->neuronToVariable( neuronIndex );
+        unsigned var = weightedSumLayer->neuronToVariable( neuronIndex );
+        unsigned originalVar = _baseIpqPreprocessor.getOldIndex( var );
 
         double nlrLb = weightedSumLayer->getLb( neuronIndex );
-        double pqLb  = _preprocessedQuery->getLowerBound( v );
+        double pqLb  = _preprocessedQuery->getLowerBound( var );
 
         double nlrUb = weightedSumLayer->getUb( neuronIndex );
-        double pqUb  = _preprocessedQuery->getUpperBound( v );
+        double pqUb  = _preprocessedQuery->getUpperBound( var );
 
         if ( !FloatUtils::areEqual( nlrLb, pqLb, 1e-9 ) ||
             !FloatUtils::areEqual( nlrUb, pqUb, 1e-9 ) )
         {
             printf("[DA][warn] bound mismatch at layer %u neuron %u "
-                "(var %u): NLR [%.6g, %.6g] vs PQ [%.6g, %.6g]\n",
-                layerIndex, neuronIndex, v, nlrLb, nlrUb, pqLb, pqUb);
+                "(var %u, old var %u): NLR [%.6g, %.6g] vs PQ [%.6g, %.6g]\n",
+                layerIndex, neuronIndex, var, originalVar, nlrLb, nlrUb, pqLb, pqUb);
             ASSERT( false );
         }
 
@@ -333,11 +335,15 @@ unsigned DependencyAnalyzer::computeSameLayerDependencies( unsigned weightedSumL
 bool DependencyAnalyzer::detectAndRecordPairConflict(unsigned layerIndex,
                                  unsigned q, unsigned r)
 {
-
     const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
-    unsigned varQ_ = weightedSumLayer->neuronToVariable( q );
-    unsigned varR_ = weightedSumLayer->neuronToVariable( r );
-    std::vector<unsigned> vars = { varQ_, varR_ };
+    
+    unsigned varQ = weightedSumLayer->neuronToVariable( q );
+    unsigned varR = weightedSumLayer->neuronToVariable( r );
+
+    unsigned originalVarQ = _baseIpqPreprocessor.getOldIndex( varQ );
+    unsigned originalVarR = _baseIpqPreprocessor.getOldIndex( varR );
+
+    std::vector<unsigned> vars = { originalVarQ, originalVarR };
     if (_isSupersetOfKnownDependency(vars))
         return false;
 
@@ -418,29 +424,33 @@ bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
     unsigned varQ = weightedSumLayer->neuronToVariable( q );
     unsigned varR = weightedSumLayer->neuronToVariable( r );
 
+    unsigned originalVarQ = _baseIpqPreprocessor.getOldIndex( varQ );
+    unsigned originalVarR = _baseIpqPreprocessor.getOldIndex( varR );
+
+
     // === Create forbidden combination (dependency) ===
     if ( q_forced_inactive && r_forced_inactive )
     {
         // u_q|r0 < 0 and u_r|q0 < 0 ⇒ forbid (q=Active, r=Active)
-        outDependency = Dependency::Pair( varQ, varR,
+        outDependency = Dependency::Pair( originalVarQ, originalVarR,
                                           ReLUState::Active, ReLUState::Active );
     }
     else if ( q_forced_active && r_forced_active )
     {
         // l_q|r0 > 0 and l_r|q0 > 0 ⇒ forbid (q=Inactive, r=Inactive)
-        outDependency = Dependency::Pair( varQ, varR,
+        outDependency = Dependency::Pair( originalVarQ, originalVarR,
                                           ReLUState::Inactive, ReLUState::Inactive );
     }
     else if ( q_forced_inactive && r_forced_active )
     {
         // u_q|r0 < 0 and l_r|q0 > 0 ⇒ forbid (q=Active, r=Inactive)
-        outDependency = Dependency::Pair( varQ, varR,
+        outDependency = Dependency::Pair( originalVarQ, originalVarR,
                                           ReLUState::Active, ReLUState::Inactive );
     }
     else if ( q_forced_active && r_forced_inactive )
     {
         // l_q|r0 > 0 and u_r|q0 < 0 ⇒ forbid (q=Inactive, r=Active)
-        outDependency = Dependency::Pair( varQ, varR,
+        outDependency = Dependency::Pair( originalVarQ, originalVarR,
                                           ReLUState::Inactive, ReLUState::Active );
     }
     else
@@ -643,10 +653,12 @@ void DependencyAnalyzer::_sliceMinMax_givenOtherZero( const Vector<double> &w_t,
     _boxMinMax( a, b, Lr, Ur, outMin, outMax );
 }
 
-bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
+bool DependencyAnalyzer::notifyNeuronFixed( unsigned newVar, ReLUState state )
 {
+    // TODO: reorganize this function.
     ASSERT( _seenPhase );
-
+    ASSERT( _preprocessor );
+    
     // Allow: (1) originally unstable vars, OR
     //        (2) stable var that become exactly at zero.
     //
@@ -654,9 +666,14 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
     //    state = Inactive  AND ub == 0
     //    state = Active    AND lb == 0
     //
-    double lb = _preprocessedQuery->getLowerBound( var );
-    double ub = _preprocessedQuery->getUpperBound( var );
-
+    printf("[DA][notifyNeuronFixed] start");
+    unsigned var = _preprocessor->getOldIndex(newVar); // oldVar
+    unsigned newBQVar = _baseIpqPreprocessor.getNewIndex(var);
+    printf("[DA][notifyNeuronFixed] start 2");
+    double lb = _preprocessedQuery->getLowerBound( newBQVar );
+    double ub = _preprocessedQuery->getUpperBound( newBQVar );
+    printf("[DA][notifyNeuronFixed] start 3");
+    
     bool originallyUnstable = _isUnstableVar( var );
 
     printf(
@@ -688,12 +705,21 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
     }
 
     // Map ReLUState -> runtime state enum
-    const ReLURuntimeState incoming =
+    ReLURuntimeState incoming =
         ( state == ReLUState::Active ) ? ReLURuntimeState::Active
                                        : ReLURuntimeState::Inactive;
 
-    auto ait = _seenPhase->find( var );    
-    ASSERT (ait == _seenPhase->end())
+    const ReLURuntimeState opposite =
+        ( state == ReLUState::Active ) ? ReLURuntimeState::Inactive
+                                       : ReLURuntimeState::Active;
+
+    auto ait = _seenPhase->find( var ); 
+    if ( ait != _seenPhase->end() && (*ait).second == opposite )
+    {
+        incoming = ReLURuntimeState::Zero;
+        printf("[DA][debug] notifyNeuronFixed(var=%u) Inactive and Active -> Zero.\n", var);
+    }
+    ASSERT (ait == _seenPhase->end() || (*ait).second == opposite)
     _seenPhase->insert( var, incoming );
 
     /**************** Debug: print current _seenPhase map ****************/
@@ -777,11 +803,16 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
         ASSERT( idx >= 0 );
 
         // Sanity: we should be transitioning from Unstable → {Active/Inactive}
-        ASSERT( depState.getLiteralState( idx ) == ReLURuntimeState::Unstable );
-        if ( state == ReLUState::Active )
+        if ( incoming != ReLURuntimeState::Zero)
+            ASSERT( depState.getLiteralState( idx ) == ReLURuntimeState::Unstable );
+        if ( incoming == ReLURuntimeState::Active )
             depState.setActive( idx );
-        else
+        else if ( incoming == ReLURuntimeState::Inactive )
             depState.setInactive( idx );
+        else if ( incoming == ReLURuntimeState::Zero)
+            depState.setZero( idx );
+        else 
+            ASSERT(false);
 
         // Apply the observed runtime state
         unsigned impliedVar = 0;
@@ -803,8 +834,9 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
             }
             else
             {
-                continue;
                 printf("[DA] Dep %u already present in _activeDepIds, skipping\n", depId);
+                ASSERT(false);
+                continue;
             }
 
             // Optional debug:
@@ -824,36 +856,42 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned var, ReLUState state )
     return foundDep;
 }
 
-void DependencyAnalyzer::notifyLowerBoundUpdate( unsigned variable,
+void DependencyAnalyzer::notifyLowerBoundUpdate( unsigned newVar,
                                                  double previousLowerBound,
                                                  double newLowerBound )
 {
+    ASSERT( _preprocessor );
     // Lower bounds must only move up (monotone tightening)
     if ( !FloatUtils::gt( newLowerBound, previousLowerBound ) )
         return;
     ASSERT( !FloatUtils::lt( newLowerBound, previousLowerBound ) );
 
+    unsigned variable = _preprocessor->getOldIndex(newVar);
+
     // Detect transition to guaranteed Active
-    printf("[DA] LB %u for %.6g -> %.6g\n", variable, previousLowerBound, newLowerBound);
+    printf("[DA] LB %u (new %u) for %.6g -> %.6g\n", variable, newVar, previousLowerBound, newLowerBound);
     if ( previousLowerBound <= 0.0 && newLowerBound >= 0.0 ){
         printf("[DA] Valid LB\n");
-        notifyNeuronFixed( variable, ReLUState::Active );}
+        notifyNeuronFixed( newVar, ReLUState::Active );}
 }
 
-void DependencyAnalyzer::notifyUpperBoundUpdate( unsigned variable,
+void DependencyAnalyzer::notifyUpperBoundUpdate( unsigned newVar,
                                                  double previousUpperBound,
                                                  double newUpperBound )
 {
+    ASSERT( _preprocessor );
     // Upper bounds must only move down (monotone tightening)
     if ( !FloatUtils::lt( newUpperBound, previousUpperBound ) )
         return;
     ASSERT( !FloatUtils::gt( newUpperBound, previousUpperBound ) );
 
+    unsigned variable = _preprocessor->getOldIndex(newVar);
+
     // Detect transition to guaranteed Inactive
-    printf("[DA] UB %u for %.6g -> %.6g\n", variable, previousUpperBound, newUpperBound);
+    printf("[DA] UB %u (new %u) for %.6g -> %.6g\n", variable, newVar, previousUpperBound, newUpperBound);
     if ( previousUpperBound >= 0.0 && newUpperBound <= 0.0 ){
         printf("[DA] Valid UB\n");
-        notifyNeuronFixed( variable, ReLUState::Inactive );}
+        notifyNeuronFixed( newVar, ReLUState::Inactive );}
 }
 
 DependencyState::DependencyId DependencyAnalyzer::_addDependency( const Dependency &d )
@@ -1001,7 +1039,11 @@ void DependencyAnalyzer::notifyQuerySolved()
     for ( unsigned i = 0; i < _inputDim; ++i )
     {
         // Map input-dimension i to the corresponding variable in the preprocessed query.
-        const unsigned var = weightedSumLayer->neuronToVariable( i );
+        const unsigned newVar = weightedSumLayer->neuronToVariable( i ); // is this updated to new or old?
+        
+        const unsigned oldVar = _baseIpqPreprocessor.getOldIndex(newVar);
+        ASSERT( newVar == oldVar); // According to Layer::eliminateVariable we never eliminate an input variable
+        unsigned var = oldVar;
 
         const double oldL = oldLb[i];
         const double oldU = oldUb[i];
@@ -1034,6 +1076,7 @@ void DependencyAnalyzer::notifyQuerySolved()
     }
     ASSERT( _isSubset( _currentLb, _currentUb, oldLb, oldUb ) );
     _context = nullptr;
+    _preprocessor = nullptr;
     _seenPhase = nullptr;
     _dependencyStates.clear();
 
@@ -1067,20 +1110,24 @@ void DependencyAnalyzer::getImpliedTightenings( List<Tightening> &tightenings )
         const Dependency &dep      = _dependencies[depId];
         DependencyState  &depState = _dependencyStates[depId];
 
-        unsigned  impliedVar   = 0;
+        unsigned  impliedOldVar   = 0;
         ReLUState impliedPhase = ReLUState::Active; // will be overwritten
 
-        bool hasImplication = depState.checkImplication( dep, impliedVar, impliedPhase );
+        bool hasImplication = depState.checkImplication( dep, impliedOldVar, impliedPhase );
+
+        unsigned  impliedVarCurr = _preprocessor->getNewIndex(impliedOldVar);
+        unsigned  impliedVarBase = _baseIpqPreprocessor.getNewIndex(impliedOldVar);
         // By design, any depId in _activeDepIds must imply something.
         if( !hasImplication ) continue;
 
-        double lb = _preprocessedQuery->getLowerBound( impliedVar );
-        double ub = _preprocessedQuery->getUpperBound( impliedVar );
+        double lb = _preprocessedQuery->getLowerBound( impliedVarBase );
+        double ub = _preprocessedQuery->getUpperBound( impliedVarBase );
 
-        printf("[DA][getImpliedTightenings] dep %u implies var %u must be %s "
+        printf("[DA][getImpliedTightenings] dep %u implies var %u (curr var %u) must be %s "
                "(current bounds: [%.10g, %.10g])\n",
                depId,
-               impliedVar,
+               impliedOldVar,
+               impliedVarCurr,
                ( impliedPhase == ReLUState::Active ? "Active" : "Inactive" ),
                lb, ub );
 
@@ -1096,16 +1143,16 @@ void DependencyAnalyzer::getImpliedTightenings( List<Tightening> &tightenings )
             // If this does not strengthen the LB, skip emitting a tightening
             if ( !FloatUtils::gt( newLb, lb ) )
             {
-                printf("[DA][getImpliedTightenings]   skip: LB already >= 0 for var %u\n",
-                       impliedVar );
+                printf("[DA][getImpliedTightenings]   skip: LB already >= 0 for var %u (curr var %u)\n",
+                       impliedOldVar, impliedVarCurr );
                 continue;
             }
 
-            Tightening t( impliedVar, newLb, Tightening::LB );
+            Tightening t( impliedVarCurr, newLb, Tightening::LB );
             tightenings.append( t );
 
-            printf("[DA][getImpliedTightenings]   -> emit LB tightening: x%u >= %.10g\n",
-                   impliedVar, newLb );
+            printf("[DA][getImpliedTightenings]   -> emit LB tightening: x%u (curr var %u) >= %.10g\n",
+                   impliedOldVar, impliedVarCurr, newLb );
         }
         else
         {
@@ -1120,16 +1167,16 @@ void DependencyAnalyzer::getImpliedTightenings( List<Tightening> &tightenings )
             // If this does not strengthen the UB, skip
             if ( !FloatUtils::lt( newUb, ub ) )
             {
-                printf("[DA][getImpliedTightenings]   skip: UB already <= 0 for var %u\n",
-                       impliedVar );
+                printf("[DA][getImpliedTightenings]   skip: UB already <= 0 for var %u (curr var %u)\n",
+                       impliedOldVar, impliedVarCurr );
                 continue;
             }
 
-            Tightening t( impliedVar, newUb, Tightening::UB );
+            Tightening t( impliedVarCurr, newUb, Tightening::UB );
             tightenings.append( t );
 
-            printf("[DA][getImpliedTightenings]   -> emit UB tightening: x%u <= %.10g\n",
-                   impliedVar, newUb );
+            printf("[DA][getImpliedTightenings]   -> emit UB tightening: x%u (curr var %u) <= %.10g\n",
+                   impliedOldVar, impliedVarCurr, newUb );
         }
     }
 
@@ -1175,7 +1222,8 @@ void DependencyAnalyzer::_collectAllUnstableNeurons()
 
             for ( unsigned neuronIndex : unstableIndices )
             {
-                unsigned var = layer->neuronToVariable( neuronIndex );
+                unsigned newVar = layer->neuronToVariable( neuronIndex );
+                unsigned var = _baseIpqPreprocessor.getOldIndex( newVar );
                 _unstableNeurons.push_back( var );
             }
         }
@@ -1204,6 +1252,7 @@ void DependencyAnalyzer::syncWithEnginePreprocessedQuery( const Query &engineQue
     ASSERT( _preprocessedQuery );
     ASSERT( _networkLevelReasoner );
     ASSERT( _context ); // setContext must have been called
+    ASSERT( _preprocessor ); 
 
     if ( _unstableNeurons.empty() )
     {
@@ -1214,8 +1263,9 @@ void DependencyAnalyzer::syncWithEnginePreprocessedQuery( const Query &engineQue
     printf("[DA][syncWithEnginePreprocessedQuery] syncing %zu unstable vars with Engine PQ\n",
            _unstableNeurons.size());
 
-    for ( unsigned var : _unstableNeurons )
+    for ( unsigned oldVar : _unstableNeurons )
     {
+        unsigned var = _preprocessor->getNewIndex(oldVar);
         // Bounds from the Engine's preprocessed query
         const double lb = engineQuery.getLowerBound( var );
         const double ub = engineQuery.getUpperBound( var );

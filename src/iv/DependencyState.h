@@ -28,7 +28,7 @@
 /*
   Possible runtime states for a ReLU literal within a dependency.
 */
-enum class ReLURuntimeState : uint8_t { Unstable, Active, Inactive };
+enum class ReLURuntimeState : uint8_t { Unstable, Active, Inactive, Zero };
 
 /*
   DependencyState:
@@ -79,6 +79,9 @@ public:
 
     // Set literal i to Inactive; requires it is currently Unstable.
     void setInactive( unsigned i );
+    
+    // Set literal i to Zero; requires it is currently Inactive/Active.
+    void setZero( unsigned i );
 
     /*
       Check whether this dependency is now "one-away" given the current

@@ -64,6 +64,13 @@ void DependencyState::setInactive( unsigned i )
     *_current[i] = ReLURuntimeState::Inactive;
 }
 
+void DependencyState::setZero( unsigned i )
+{
+    ASSERT( i < _current.size() );
+    ASSERT( *_current[i] == ReLURuntimeState::Inactive || *_current[i] == ReLURuntimeState::Active );
+    *_current[i] = ReLURuntimeState::Zero;
+}
+
 static inline ReLUState negatePhase( ReLUState s )
 {
     return ( s == ReLUState::Active ) ? ReLUState::Inactive : ReLUState::Active;
@@ -97,6 +104,7 @@ bool DependencyState::checkImplication( const Dependency &dep,
         const char *rtStr =
             (rt == ReLURuntimeState::Active)   ? "A" :
             (rt == ReLURuntimeState::Inactive) ? "I" :
+            (rt == ReLURuntimeState::Zero)     ? "Z" :
                                                  "U";  // Unstable
         printf("[%s] ", rtStr);
     }
@@ -117,7 +125,7 @@ bool DependencyState::checkImplication( const Dependency &dep,
             ( rt == ReLURuntimeState::Active ) ? ReLUState::Active
                                                : ReLUState::Inactive;
 
-        if ( rtAsPhase == phases[i] )
+        if ( rtAsPhase == phases[i] || rt == ReLURuntimeState::Zero)
             ++matched;
         else
             ++contradicted;
