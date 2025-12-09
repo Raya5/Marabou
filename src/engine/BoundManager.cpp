@@ -145,43 +145,20 @@ unsigned BoundManager::getNumberOfVariables() const
 
 bool BoundManager::tightenLowerBound( unsigned variable, double value )
 {
-    double oldLb = getLowerBound( variable );
     bool tightened = setLowerBound( variable, value );
 
-    if ( tightened )
-    {
-        if ( _dependencyAnalyzer )
-        {
-            printf( "[BM][debug] tightenLowerBound: var %u, LB %.6f -> %.6f\n",
-                    variable, oldLb, value );
-            _dependencyAnalyzer->notifyLowerBoundUpdate( variable, oldLb, value );
-        }
-
-        if ( _tableau != nullptr )
-            _tableau->updateVariableToComplyWithLowerBoundUpdate( variable, value );
-    }
+    if ( tightened && _tableau != nullptr )
+        _tableau->updateVariableToComplyWithLowerBoundUpdate( variable, value );
 
     return tightened;
 }
 
 bool BoundManager::tightenUpperBound( unsigned variable, double value )
 {
-    double oldUb = getUpperBound( variable );
-    double oldLb = getLowerBound( variable );
     bool tightened = setUpperBound( variable, value );
 
-    if ( tightened )
-    {
-        if ( _dependencyAnalyzer )
-        {
-            printf( "[BM][debug] tightenUpperBound: var %u, UB %.6f -> %.6f (LB %.6f)\n",
-                    variable, oldUb, value, oldLb );
-            _dependencyAnalyzer->notifyUpperBoundUpdate( variable, oldUb, value );
-        }
-
-        if ( _tableau != nullptr )
-            _tableau->updateVariableToComplyWithUpperBoundUpdate( variable, value );
-    }
+    if ( tightened && _tableau != nullptr )
+        _tableau->updateVariableToComplyWithUpperBoundUpdate( variable, value );
 
     return tightened;
 }
@@ -200,27 +177,51 @@ void BoundManager::recordInconsistentBound( unsigned variable,
 bool BoundManager::setLowerBound( unsigned variable, double value )
 {
     ASSERT( variable < _size );
-    if ( value > _lowerBounds[variable] )
+
+    double oldLb = _lowerBounds[variable];
+
+    if ( value > oldLb )
     {
         _lowerBounds[variable] = value;
         *_tightenedLower[variable] = true;
+
         if ( !consistentBounds( variable ) )
             recordInconsistentBound( variable, value, Tightening::LB );
+
+        if ( _dependencyAnalyzer )
+        {
+            printf( "[BM][debug] setLowerBound: var %u, LB %.6f -> %.6f\n",
+                    variable, oldLb, value );
+            _dependencyAnalyzer->notifyLowerBoundUpdate( variable, oldLb, value );
+        }
+
         return true;
     }
     return false;
 }
 
-
 bool BoundManager::setUpperBound( unsigned variable, double value )
 {
     ASSERT( variable < _size );
-    if ( value < _upperBounds[variable] )
+
+    double oldUb = _upperBounds[variable];
+
+    if ( value < oldUb )
     {
         _upperBounds[variable] = value;
         *_tightenedUpper[variable] = true;
+
         if ( !consistentBounds( variable ) )
             recordInconsistentBound( variable, value, Tightening::UB );
+
+        if ( _dependencyAnalyzer )
+        {
+            double currentLb = _lowerBounds[variable];
+            printf( "[BM][debug] setUpperBound: var %u, UB %.6f -> %.6f (LB %.6f)\n",
+                    variable, oldUb, value, currentLb );
+            _dependencyAnalyzer->notifyUpperBoundUpdate( variable, oldUb, value );
+        }
+
         return true;
     }
     return false;
@@ -342,20 +343,12 @@ const SparseUnsortedList &BoundManager::getExplanation( unsigned variable, bool 
 
 bool BoundManager::tightenLowerBound( unsigned variable, double value, const TableauRow &row )
 {
-    double oldLb = getLowerBound( variable );
     bool tightened = setLowerBound( variable, value );
 
     if ( tightened )
     {
         if ( shouldProduceProofs() )
             _boundExplainer->updateBoundExplanation( row, Tightening::LB, variable );
-
-        if ( _dependencyAnalyzer )
-        {
-            printf( "[BM][debug] tightenLowerBound (sparse): var %u, LB %.6f -> %.6f\n",
-                    variable, oldLb, value );
-            _dependencyAnalyzer->notifyLowerBoundUpdate( variable, oldLb, value );
-        }
 
         if ( _tableau != nullptr )
             _tableau->updateVariableToComplyWithLowerBoundUpdate( variable, value );
@@ -365,20 +358,12 @@ bool BoundManager::tightenLowerBound( unsigned variable, double value, const Tab
 
 bool BoundManager::tightenUpperBound( unsigned variable, double value, const TableauRow &row )
 {
-    double oldUb = getUpperBound( variable );
     bool tightened = setUpperBound( variable, value );
 
     if ( tightened )
     {
         if ( shouldProduceProofs() )
             _boundExplainer->updateBoundExplanation( row, Tightening::UB, variable );
-
-        if ( _dependencyAnalyzer )
-        {
-            printf( "[BM][debug] tightenUpperBound (sparse): var %u, UB %.6f -> %.6f\n",
-                    variable, oldUb, value );
-            _dependencyAnalyzer->notifyUpperBoundUpdate( variable, oldUb, value );
-        }
 
         if ( _tableau != nullptr )
             _tableau->updateVariableToComplyWithUpperBoundUpdate( variable, value );
@@ -390,20 +375,12 @@ bool BoundManager::tightenLowerBound( unsigned variable,
                                       double value,
                                       const SparseUnsortedList &row )
 {
-    double oldLb = getLowerBound( variable );
     bool tightened = setLowerBound( variable, value );
 
     if ( tightened )
     {
         if ( shouldProduceProofs() )
             _boundExplainer->updateBoundExplanationSparse( row, Tightening::LB, variable );
-
-        if ( _dependencyAnalyzer )
-        {
-            printf( "[BM][debug] tightenLowerBound (sparse): var %u, LB %.6f -> %.6f\n",
-                    variable, oldLb, value );
-            _dependencyAnalyzer->notifyLowerBoundUpdate( variable, oldLb, value );
-        }
 
         if ( _tableau != nullptr )
             _tableau->updateVariableToComplyWithLowerBoundUpdate( variable, value );
@@ -415,20 +392,12 @@ bool BoundManager::tightenUpperBound( unsigned variable,
                                       double value,
                                       const SparseUnsortedList &row )
 {
-    double oldUb = getUpperBound( variable );
     bool tightened = setUpperBound( variable, value );
 
     if ( tightened )
     {
         if ( shouldProduceProofs() )
             _boundExplainer->updateBoundExplanationSparse( row, Tightening::UB, variable );
-
-        if ( _dependencyAnalyzer )
-        {
-            printf( "[BM][debug] tightenUpperBound (sparse): var %u, UB %.6f -> %.6f\n",
-                    variable, oldUb, value );
-            _dependencyAnalyzer->notifyUpperBoundUpdate( variable, oldUb, value );
-        }
 
         if ( _tableau != nullptr )
             _tableau->updateVariableToComplyWithUpperBoundUpdate( variable, value );
@@ -585,8 +554,8 @@ double BoundManager::computeRowBound( const TableauRow &row, const bool isUpper 
 
         multiplier = ( isUpper && FloatUtils::isPositive( row[i] ) ) ||
                              ( !isUpper && FloatUtils::isNegative( row[i] ) )
-                       ? _upperBounds[var]
-                       : _lowerBounds[var];
+                         ? _upperBounds[var]
+                         : _lowerBounds[var];
         multiplier = FloatUtils::isZero( multiplier ) ? 0 : multiplier * row[i];
         bound += FloatUtils::isZero( multiplier ) ? 0 : multiplier;
     }
@@ -633,8 +602,8 @@ double BoundManager::computeSparseRowBound( const SparseUnsortedList &row,
             continue;
 
         multiplier = ( isUpper && realCoefficient > 0 ) || ( !isUpper && realCoefficient < 0 )
-                       ? _upperBounds[curVar]
-                       : _lowerBounds[curVar];
+                         ? _upperBounds[curVar]
+                         : _lowerBounds[curVar];
         multiplier = FloatUtils::isZero( multiplier ) ? 0 : multiplier * realCoefficient;
         bound += FloatUtils::isZero( multiplier ) ? 0 : multiplier;
     }
@@ -652,7 +621,7 @@ bool BoundManager::shouldProduceProofs() const
     return _boundExplainer != nullptr;
 }
 
-void BoundManager::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer ) 
+void BoundManager::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer )
 {
     _dependencyAnalyzer = dependencyAnalyzer;
 }
