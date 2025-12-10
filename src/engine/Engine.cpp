@@ -4140,7 +4140,8 @@ void Engine::applyDependencyAnalyzerTightenings()
     ASSERT( !_produceUNSATProofs ); // incremental and UNSAT proofs assumed mutually exclusive
 
     List<Tightening> tightenings;
-    _dependencyAnalyzer->getImpliedTightenings( tightenings );
+    // _dependencyAnalyzer->getImpliedTightenings( tightenings );
+    _dependencyAnalyzer->getImpliedTighteningsFromSat( tightenings );
 
     if ( tightenings.empty() )
     {

@@ -29,6 +29,7 @@
 #include "context/cdo.h"
 #include "context/context.h"
 #include "Preprocessor.h"
+#include "cadical.hpp"
 
 
 // #include <memory>
@@ -214,6 +215,16 @@ public:
     */
     void syncWithEnginePreprocessedQuery( const Query &engineQuery );
 
+    /*
+      Use the SAT solver (CaDiCaL) and the current runtime phases
+      in _seenPhase to compute implied ReLU phases, and convert them
+      into tightenings.
+    */
+    void getImpliedTighteningsFromSat( List<Tightening> &tightenings );
+
+    // Debug helper: dump all clauses currently stored in the CaDiCaL solver
+    // in DIMACS format to stdout.
+    void debugPrintSatClauses();
 
     /**************** For Debugging ********************/
 
@@ -286,7 +297,44 @@ private:
     // List of pre-activation variables that are unstable (lb < 0 < ub)
     // at the initial covering box / DeepPoly run.
     std::vector<unsigned> _unstableNeurons;    
+
+    // SAT-based reasoning with CaDiCaL
+    CaDiCaL::Solver _cadical;
+
+    // Map from sparse ReLU index → CaDiCaL SAT variable (1..N)
+    std::unordered_map<unsigned, unsigned> _reluIndexToSatVar;
+
+    // Vector from SAT variable (1..N) → ReLU index
+    // satVar v maps to _satVarToReluIndex[v]
+    Vector<unsigned> _satVarToReluIndex;
     
+    // --- Helper functions ---
+
+    // Returns the SAT solver variable for this reluIndex, creating one if needed.
+    unsigned reluIndexToSatVar( unsigned reluIndex );
+
+    // Returns the reluIndex for a SAT solver variable, asserting correctness.
+    unsigned satVarToReluIndex( unsigned satVar ) const;
+
+    // Map ReLU + phase → literal
+    int phaseToLit( unsigned reluIndex, ReLUState phase );
+
+    // Map CaDiCaL literal → ReLU+phase
+    bool litToPhase( int lit, unsigned &reluIndex, ReLUState &phase );
+
+    void addDependenciesTocadical( Dependency d );
+    void _encodeDependencyToClauseLits( const Dependency &d, Vector<int> &outClause );
+
+    /*
+      Given a ReLU pre-activation variable and an implied phase (Active/Inactive),
+      emit the corresponding bound tightening(s) into `tightenings` if they
+      strengthen the current bounds in the preprocessed query.
+    */
+    void _emitTighteningsForImpliedPhase( unsigned reluVar,
+                                          ReLUState impliedPhase,
+                                          List<Tightening> &tightenings );
+
+
     /**************** For Debugging ********************/
     /*
       Debug-only dependency index for duplicate assertion.
@@ -366,6 +414,17 @@ private:
       Check whether a given variable id belongs to the unstable set.
     */
     bool _isUnstableVar( unsigned var ) const;
+    
+    /*
+      Initialize the CaDiCaL solver and allocate SAT variables for ReLUs
+    */
+    void _initializeSatSolver();
+    
+    // /*
+    //   Return the current phase of the given ReLU, according to _seenPhase.
+    //   If the ReLU is not present in _seenPhase, we treat it as UNSTABLE/UNKNOWN.
+    // */
+    ReLURuntimeState _getReluPhase( unsigned reluIndex ) const;
 
 
 
