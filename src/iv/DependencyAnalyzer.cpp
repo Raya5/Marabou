@@ -527,32 +527,31 @@ bool DependencyAnalyzer::_isSupersetOfKnownDependency(const std::vector<unsigned
 }
 
 
-void DependencyAnalyzer::addDependenciesTocadical( Dependency d )
+void DependencyAnalyzer::addDependenciesTocadical( const Dependency &dep )
 {
     printf("\n[DA][SAT] ================================================\n");
     printf("[DA][SAT] Adding dependency to CaDiCaL\n");
     printf("[DA][SAT] addDependenciesTocadical: this=%p, _cadical=%p\n",
-           (void*)this, (void*)&_cadical);
+           (void *)this, (void *)&_cadical);
 
     // Pretty-print the dependency
-    const auto &vars   = d.getVars();
-    const auto &states = d.getStates();
+    const auto &vars   = dep.getVars();
+    const auto &states = dep.getStates();
 
     printf("[DA][SAT]   Dependency (nogood): ");
     for ( unsigned i = 0; i < vars.size(); ++i )
     {
-        const char *s =
-            (states[i] == ReLUState::Active) ? "A" :
+        const char *phaseStr =
+            (states[i] == ReLUState::Active)   ? "A" :
             (states[i] == ReLUState::Inactive) ? "I" :
-            "?";
-
-        printf("(%u,%s) ", vars[i], s);
+                                                 "?";
+        printf("(%u,%s) ", vars[i], phaseStr);
     }
     printf("\n");
 
     // Encode the nogood clause
     Vector<int> clauseLits;
-    _encodeDependencyToClauseLits( d, clauseLits );
+    _encodeDependencyToClauseLits( dep, clauseLits );
 
     ASSERT( !clauseLits.empty() );
 
@@ -569,20 +568,20 @@ void DependencyAnalyzer::addDependenciesTocadical( Dependency d )
 
     printf("[DA][SAT]   Clause successfully added.\n");
     printf("[DA][SAT] ================================================\n\n");
+
     debugPrintSatClauses();
 }
 
-
-void DependencyAnalyzer::_encodeDependencyToClauseLits( const Dependency &d,
+void DependencyAnalyzer::_encodeDependencyToClauseLits( const Dependency &dep,
                                                         Vector<int> &outClause )
 {
     ASSERT( outClause.empty());
 
-    const auto &vars   = d.getVars();
-    const auto &states = d.getStates();
+    const auto &vars   = dep.getVars();
+    const auto &states = dep.getStates();
 
     ASSERT( vars.size() == states.size() );
-    ASSERT ( !vars.empty() );
+    ASSERT( !vars.empty() );
 
     /*
       Each Dependency is a nogood: the pattern
@@ -596,8 +595,8 @@ void DependencyAnalyzer::_encodeDependencyToClauseLits( const Dependency &d,
     */
     for ( unsigned i = 0; i < vars.size(); ++i )
     {
-        unsigned   reluVar = vars[i];      // Marabou variable ID of this ReLU
-        ReLUState  phase   = states[i];    // Active / Inactive
+        unsigned  reluVar = vars[i];      // Marabou variable ID of this ReLU
+        ReLUState phase   = states[i];    // Active / Inactive
 
         // Literal meaning "reluVar is in phase 'phase'"
         int lit = phaseToLit( reluVar, phase );
@@ -606,8 +605,6 @@ void DependencyAnalyzer::_encodeDependencyToClauseLits( const Dependency &d,
         outClause.append( -lit );
     }
 }
-
-
 
 bool DependencyAnalyzer::recordConflict( Dependency d )
 {
@@ -1388,56 +1385,57 @@ void DependencyAnalyzer::syncWithEnginePreprocessedQuery( const Query &engineQue
 
 void DependencyAnalyzer::_initializeSatSolver()
 {
-
     printf("[DA][SAT] _initializeSatSolver: this=%p, _cadical=%p\n",
-           (void*)this, (void*)&_cadical);
-    // We will later:
-    //  - create one SAT variable per ReLU
-    //  - fill _reluToSatVar and _satVarToReluIndex
-    //  - add dependency clauses once dependencies are available
-    _satVarToReluIndex.append( (unsigned)-1 );  
+           (void *)this, (void *)&_cadical);
+
+    // Reserve index 0 so that SAT variables 1..N map naturally to indices
+    // 1..N in _satVarToReluIndex.
+    //
+    // We do not clear existing state here; this is called once from the
+    // constructor.
+    _satVarToReluIndex.append( (unsigned)-1 );
 }
 
-ReLURuntimeState DependencyAnalyzer::_getReluPhase( unsigned reluIndex ) const
+ReLURuntimeState DependencyAnalyzer::_getReluPhase( unsigned reluVar ) const
 {
     ASSERT( _seenPhase );
 
-    // If reluIndex is already the key, keep it; otherwise map index -> id here.
-    unsigned reluId = reluIndex;
-
-    auto it = _seenPhase->find( reluId );
+    auto it = _seenPhase->find( reluVar );
     if ( it == _seenPhase->end() )
         return ReLURuntimeState::Unstable; // not fixed yet
 
     // CDHashMap stores ReLURuntimeState as the value type
-    ReLURuntimeState res = (*it).second;
+    ReLURuntimeState state = (*it).second;
 
     // For the SAT encoding we only care about Active/Inactive;
     // treat Zero like Unstable for now.
-    if ( res == ReLURuntimeState::Zero )
+    if ( state == ReLURuntimeState::Zero )
         return ReLURuntimeState::Unstable;
 
-    return res;
+    return state;
 }
-unsigned DependencyAnalyzer::reluIndexToSatVar( unsigned reluIndex )
+
+unsigned DependencyAnalyzer::reluIndexToSatVar( unsigned reluVar )
 {
     // Check if already exists
-    auto it = _reluIndexToSatVar.find( reluIndex );
+    auto it = _reluIndexToSatVar.find( reluVar );
     if ( it != _reluIndexToSatVar.end() )
         return it->second;
 
-    // Create new SAT variable
-    unsigned newSatVar = _satVarToReluIndex.size();  // size() gives next available index
-                                                     // since index 0 will be unused
-    printf("[DA][reluIndexToSatVar] for %u relu new sat var is %u\n", reluIndex, newSatVar);
-    // Tell CaDiCaL we want a new var
+    // Create new SAT variable index. We rely on CaDiCaL's ability to grow
+    // its internal variable range when it first sees this index in clauses.
+    //
+    // _satVarToReluIndex[0] is unused; size() gives the next available index.
+    unsigned newSatVar = _satVarToReluIndex.size();
+    printf("[DA][reluIndexToSatVar] for ReLU var %u new SAT var is %u\n",
+           reluVar, newSatVar);
+
     printf("[DA][SAT]   _cadical.vars() = %d\n", _cadical.vars());
-    // _cadical.add( newSatVar );  // alternatively: _cadical.new_var()
-    printf("[DA][SAT]   _cadical.vars() = %d\n", _cadical.vars());
+    // No need to call new_var() explicitly here.
 
     // Store forward + reverse mapping
-    _reluIndexToSatVar[reluIndex] = newSatVar;
-    _satVarToReluIndex.append( reluIndex );
+    _reluIndexToSatVar[reluVar] = newSatVar;
+    _satVarToReluIndex.append( reluVar );
 
     return newSatVar;
 }
@@ -1450,29 +1448,39 @@ unsigned DependencyAnalyzer::satVarToReluIndex( unsigned satVar ) const
     return _satVarToReluIndex[satVar];
 }
 
-int DependencyAnalyzer::phaseToLit( unsigned reluIndex,
+
+int DependencyAnalyzer::phaseToLit( unsigned reluVar,
                                     ReLUState phase )
 {
     ASSERT( phase == ReLUState::Active ||
             phase == ReLUState::Inactive );
 
-    unsigned v = reluIndexToSatVar( reluIndex );
-    return (phase == ReLUState::Active) ? (int)v : -(int)v;
+    unsigned satVar = reluIndexToSatVar( reluVar );
+    int lit = (phase == ReLUState::Active) ? (int)satVar : -(int)satVar;
+
+    printf("[DA][SAT] phaseToLit: reluVar=%u, phase=%s -> lit=%d\n",
+           reluVar,
+           (phase == ReLUState::Active ? "Active" : "Inactive"),
+           lit);
+
+    return lit;
 }
 
 bool DependencyAnalyzer::litToPhase( int lit,
-                                     unsigned &reluIndex,
+                                     unsigned &reluVar,
                                      ReLUState &phase )
 {
-    ASSERT ( lit != 0 );
+    ASSERT( lit != 0 );
 
-    unsigned v = (lit > 0) ? lit : -lit;
+    unsigned satVar = (lit > 0) ? (unsigned)lit : (unsigned)(-lit);
+    ASSERT( satVar < _satVarToReluIndex.size() );
 
-    ASSERT(v < _satVarToReluIndex.size());
+    reluVar = satVarToReluIndex( satVar );
+    phase   = (lit > 0) ? ReLUState::Active : ReLUState::Inactive;
 
-    reluIndex = satVarToReluIndex( v );
-    phase = (lit > 0) ? ReLUState::Active
-                      : ReLUState::Inactive;
+    printf("[DA][SAT] litToPhase: lit=%d -> satVar=%u, reluVar=%u, phase=%s\n",
+           lit, satVar, reluVar,
+           (phase == ReLUState::Active ? "Active" : "Inactive"));
 
     return true;
 }
@@ -1483,12 +1491,14 @@ void DependencyAnalyzer::_emitTighteningsForImpliedPhase( unsigned reluVar,
 {
     ASSERT( _preprocessedQuery );
 
-    // Current bounds for this pre-activation variable
-    unsigned  reluVarBase = _baseIpqPreprocessor.getNewIndex(reluVar);
+    // Current bounds for this pre-activation variable in the analyzer’s
+    // preprocessed query.
+    unsigned reluVarBase = _baseIpqPreprocessor.getNewIndex( reluVar );
     double lb = _preprocessedQuery->getLowerBound( reluVarBase );
     double ub = _preprocessedQuery->getUpperBound( reluVarBase );
-    printf("[DA][_emitTighteningsForImpliedPhase] old %u, base new %u\n", reluVar, reluVarBase);
-    
+
+    printf("[DA][_emitTighteningsForImpliedPhase] old var %u, base-preprocessed var %u\n",
+           reluVar, reluVarBase);
 
     if ( impliedPhase == ReLUState::Active )
     {
@@ -1499,14 +1509,15 @@ void DependencyAnalyzer::_emitTighteningsForImpliedPhase( unsigned reluVar,
         ASSERT( !FloatUtils::gt( newLb, ub ) );
 
         // If this does not strengthen the LB, skip emitting a tightening
-        ASSERT ( FloatUtils::gt( newLb, lb ) );
-        unsigned  newReluVar = _preprocessor->getNewIndex(reluVar);
+        ASSERT( FloatUtils::gt( newLb, lb ) );
 
-        Tightening t( newReluVar, newLb, Tightening::LB );
+        unsigned engineVar = _preprocessor->getNewIndex( reluVar );
+
+        Tightening t( engineVar, newLb, Tightening::LB );
         tightenings.append( t );
 
-        printf("[DA][SAT]   -> emit LB tightening: x%u >= %.10g\n",
-               reluVar, newLb );
+        printf("[DA][SAT]   -> emit LB tightening: x%u >= %.10g (engine var %u)\n",
+               reluVar, newLb, engineVar );
     }
     else
     {
@@ -1518,14 +1529,15 @@ void DependencyAnalyzer::_emitTighteningsForImpliedPhase( unsigned reluVar,
         ASSERT( !FloatUtils::lt( newUb, lb ) );
 
         // If this does not strengthen the UB, skip
-        ASSERT ( FloatUtils::lt( newUb, ub ) );
-        unsigned  newReluVar = _preprocessor->getNewIndex(reluVar);
+        ASSERT( FloatUtils::lt( newUb, ub ) );
 
-        Tightening t( newReluVar, newUb, Tightening::UB );
+        unsigned engineVar = _preprocessor->getNewIndex( reluVar );
+
+        Tightening t( engineVar, newUb, Tightening::UB );
         tightenings.append( t );
 
-        printf("[DA][SAT]   -> emit UB tightening: x%u <= %.10g\n",
-               reluVar, newUb );
+        printf("[DA][SAT]   -> emit UB tightening: x%u <= %.10g (engine var %u)\n",
+               reluVar, newUb, engineVar );
     }
 }
 
@@ -1565,6 +1577,7 @@ void DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tighten
     if ( res == 20 )
     {
         printf("[DA][SAT]   propagate() returned CONFLICT (20); no tightenings.\n");
+        printf("[DA][SAT] ===== end getImpliedTighteningsFromSat (conflict) =====\n\n");
         return;
     }
 
@@ -1583,22 +1596,24 @@ void DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tighten
 
     for ( int lit : implicants )
     {
-        unsigned reluVar = 0;
+        unsigned  reluVar = 0;
         ReLUState impliedPhase;
 
         bool success = litToPhase( lit, reluVar, impliedPhase );
-        ASSERT ( success );
+        ASSERT( success );
 
         ReLURuntimeState currentRt = _getReluPhase( reluVar );
 
+        const char *impliedStr =
+            (impliedPhase == ReLUState::Active) ? "Active" : "Inactive";
+        const char *rtStr =
+            (currentRt == ReLURuntimeState::Active)   ? "Active"   :
+            (currentRt == ReLURuntimeState::Inactive) ? "Inactive" :
+            (currentRt == ReLURuntimeState::Zero)     ? "Zero"     :
+                                                        "Unstable";
+
         printf("[DA][SAT]   lit %d ⇒ var %u implied %s; current runtime state = %s\n",
-               lit,
-               reluVar,
-               (impliedPhase == ReLUState::Active ? "Active" : "Inactive"),
-               (currentRt == ReLURuntimeState::Active   ? "Active" :
-                currentRt == ReLURuntimeState::Inactive ? "Inactive" :
-                currentRt == ReLURuntimeState::Zero     ? "Zero" :
-                                                          "Unstable"));
+               lit, reluVar, impliedStr, rtStr);
 
         // Skip if already fixed to the same phase
         if ( (currentRt == ReLURuntimeState::Active   && impliedPhase == ReLUState::Active) ||
@@ -1613,59 +1628,55 @@ void DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tighten
              (currentRt == ReLURuntimeState::Inactive && impliedPhase == ReLUState::Active) )
         {
             printf("[DA][SAT]     -> WARNING: implied phase contradicts current runtime state, skipping\n");
-            ASSERT(false);
+            ASSERT( false );
         }
 
-        if ( currentRt == ReLURuntimeState::Zero   &&
-             ( impliedPhase == ReLUState::Active || impliedPhase == ReLUState::Inactive) )
+        if ( currentRt == ReLURuntimeState::Zero &&
+             (impliedPhase == ReLUState::Active || impliedPhase == ReLUState::Inactive) )
         {
-            printf("[DA][SAT]     -> zero implied\n");
-            ASSERT(false);
+            printf("[DA][SAT]     -> WARNING: Zero state with non-zero implied phase, skipping\n");
+            ASSERT( false );
         }
 
         // For Unstable we treat this as a *new* implied phase that can tighten bounds.
         _emitTighteningsForImpliedPhase( reluVar, impliedPhase, tightenings );
     }
 
-    printf("[DA][SAT] ===== end getImpliedTighteningsFromSat =====\n\n");
-    
+    printf("[DA][SAT] ===== end getImpliedTighteningsFromSat (emitted %u tightenings) =====\n\n",
+           tightenings.size());
 }
+
 void DependencyAnalyzer::debugPrintSatClauses()
 {
     printf("[DA][SAT] debugPrintSatClauses: this=%p, _cadical=%p\n",
-           (void*)this, (void*)&_cadical);
+           (void *)this, (void *)&_cadical);
 
     const char *path = "debug_cadical.cnf";
 
     printf("\n[DA][SAT] Dumping CaDiCaL CNF to stdout (via temp file)\n");
 
-    // Step 1: ask CaDiCaL to write DIMACS into a file
-    const char *err = _cadical.write_dimacs(path);
-    if (err)
+    const char *err = _cadical.write_dimacs( path );
+    if ( err )
     {
-        printf("[DA][SAT]   ERROR from write_dimacs: %s\n", err);
+        printf("[DA][SAT]   ERROR from write_dimacs: %s\n", err );
         return;
     }
 
-    // Step 2: read the file and print its content
-    FILE *fp = fopen(path, "r");
-    if (!fp)
+    FILE *fp = fopen( path, "r" );
+    if ( !fp )
     {
-        printf("[DA][SAT]   ERROR: cannot open '%s' for reading\n", path);
+        printf("[DA][SAT]   ERROR: cannot open '%s' for reading\n", path );
         return;
     }
 
     printf("[DA][SAT]   --- Begin DIMACS CNF ---\n");
-
     char buffer[4096];
-    while (fgets(buffer, sizeof(buffer), fp))
-        printf("%s", buffer);
-
+    while ( fgets( buffer, sizeof( buffer ), fp ) )
+        printf("%s", buffer );
     printf("[DA][SAT]   --- End DIMACS CNF ---\n\n");
 
-    fclose(fp);
+    fclose( fp );
 }
-
 
 
 

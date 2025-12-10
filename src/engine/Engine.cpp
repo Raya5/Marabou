@@ -4136,12 +4136,31 @@ void Engine::applyDependencyAnalyzerTightenings()
 {
     ASSERT( _incrementalMode );
     ASSERT( _dependencyAnalyzer );
-    ASSERT( _lpSolverType == LPSolverType::NATIVE || _lpSolverType == LPSolverType::GUROBI  );
+    ASSERT( _lpSolverType == LPSolverType::NATIVE || _lpSolverType == LPSolverType::GUROBI );
     ASSERT( !_produceUNSATProofs ); // incremental and UNSAT proofs assumed mutually exclusive
 
+    /*
+      Ask the DependencyAnalyzer for implied tightenings.
+
+      There are currently two implementations:
+
+        - getImpliedTightenings(...)          // legacy, based on direct dependency reasoning
+        - getImpliedTighteningsFromSat(...)   // new, SAT-based using CaDiCaL
+
+      We use the SAT-based version by default. The legacy version is kept
+      around for debugging / comparison and can be re-enabled if needed.
+    */
     List<Tightening> tightenings;
-    // _dependencyAnalyzer->getImpliedTightenings( tightenings );
-    _dependencyAnalyzer->getImpliedTighteningsFromSat( tightenings );
+
+    const bool useSatBasedTightenings = true;
+    if ( useSatBasedTightenings )
+    {
+        _dependencyAnalyzer->getImpliedTighteningsFromSat( tightenings );
+    }
+    else
+    {
+        _dependencyAnalyzer->getImpliedTightenings( tightenings );
+    }
 
     if ( tightenings.empty() )
     {
@@ -4154,43 +4173,41 @@ void Engine::applyDependencyAnalyzerTightenings()
 
     for ( const auto &tightening : tightenings )
     {
-        const unsigned originalVar = tightening._variable;
-        const unsigned mergedVar   = _tableau->getVariableAfterMerging( originalVar );
+        const unsigned engineVar  = tightening._variable;                          // variable id as seen by Engine / BoundManager
+        const unsigned tableauVar = _tableau->getVariableAfterMerging( engineVar ); // after merging in the tableau
 
-        const double currentLb = _boundManager.getLowerBound( originalVar );
-        const double currentUb = _boundManager.getUpperBound( originalVar );
+        const double currentLb = _boundManager.getLowerBound( engineVar );
+        const double currentUb = _boundManager.getUpperBound( engineVar );
 
         if ( tightening._type == Tightening::LB )
         {
             const double newLb = tightening._value;
 
-            printf( "[Engine][IV] DA tightening: x%u (orig %u) LB: %.10g -> %.10g "
-                    "(UB = %.10g)\n",
-                    mergedVar, originalVar,
+            printf( "[Engine][IV] DA tightening: x%u (orig %u) LB: %.10g -> %.10g (UB = %.10g)\n",
+                    tableauVar, engineVar,
                     currentLb, newLb, currentUb );
 
             // Safety: new LB must not exceed current UB
             ASSERT( !FloatUtils::gt( newLb, currentUb ) );
-            // Must be a *strict* strengthening (DA should not emit non-strengthening LBs)
+            // The analyzer should not emit strictly worse LBs
             ASSERT( !FloatUtils::lt( newLb, currentLb ) );
 
-            _boundManager.tightenLowerBound( mergedVar, newLb );
+            _boundManager.tightenLowerBound( tableauVar, newLb );
         }
         else if ( tightening._type == Tightening::UB )
         {
             const double newUb = tightening._value;
 
-            printf( "[Engine][IV] DA tightening: x%u (orig %u) UB: %.10g -> %.10g "
-                    "(LB = %.10g)\n",
-                    mergedVar, originalVar,
+            printf( "[Engine][IV] DA tightening: x%u (orig %u) UB: %.10g -> %.10g (LB = %.10g)\n",
+                    tableauVar, engineVar,
                     currentUb, newUb, currentLb );
 
             // Safety: new UB must not go below current LB
             ASSERT( !FloatUtils::lt( newUb, currentLb ) );
-            // Must be a strengthening (DA should not emit non-strengthening UBs)
+            // The analyzer should not emit strictly worse UBs
             ASSERT( !FloatUtils::gt( newUb, currentUb ) );
-        
-            _boundManager.tightenUpperBound( mergedVar, newUb );
+
+            _boundManager.tightenUpperBound( tableauVar, newUb );
         }
         else
         {

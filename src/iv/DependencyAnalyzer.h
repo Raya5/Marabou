@@ -301,29 +301,31 @@ private:
     // SAT-based reasoning with CaDiCaL
     CaDiCaL::Solver _cadical;
 
-    // Map from sparse ReLU index → CaDiCaL SAT variable (1..N)
+    // Map from sparse ReLU variable index → CaDiCaL SAT variable (1..N)
     std::unordered_map<unsigned, unsigned> _reluIndexToSatVar;
 
-    // Vector from SAT variable (1..N) → ReLU index
-    // satVar v maps to _satVarToReluIndex[v]
+    // Vector from SAT variable (1..N) → ReLU variable index.
     Vector<unsigned> _satVarToReluIndex;
-    
+
     // --- Helper functions ---
 
-    // Returns the SAT solver variable for this reluIndex, creating one if needed.
-    unsigned reluIndexToSatVar( unsigned reluIndex );
+    // Returns the SAT solver variable for this ReLU variable, creating one if needed.
+    unsigned reluIndexToSatVar( unsigned reluVar );
 
-    // Returns the reluIndex for a SAT solver variable, asserting correctness.
+    // Returns the ReLU variable index for a SAT solver variable, asserting correctness.
     unsigned satVarToReluIndex( unsigned satVar ) const;
 
-    // Map ReLU + phase → literal
-    int phaseToLit( unsigned reluIndex, ReLUState phase );
+    // Map ReLU + phase → SAT literal (positive = Active, negative = Inactive).
+    int phaseToLit( unsigned reluVar, ReLUState phase );
 
-    // Map CaDiCaL literal → ReLU+phase
-    bool litToPhase( int lit, unsigned &reluIndex, ReLUState &phase );
+    // Map CaDiCaL literal → (ReLU, phase). Returns true on success.
+    bool litToPhase( int lit, unsigned &reluVar, ReLUState &phase );
 
-    void addDependenciesTocadical( Dependency d );
-    void _encodeDependencyToClauseLits( const Dependency &d, Vector<int> &outClause );
+    // Encode a single dependency as a CNF clause and add it to the SAT solver.
+    void addDependenciesTocadical( const Dependency &dep );
+
+    // Build the clause literals (negated nogood) for a dependency.
+    void _encodeDependencyToClauseLits( const Dependency &dep, Vector<int> &outClause );
 
     /*
       Given a ReLU pre-activation variable and an implied phase (Active/Inactive),
@@ -414,17 +416,18 @@ private:
       Check whether a given variable id belongs to the unstable set.
     */
     bool _isUnstableVar( unsigned var ) const;
-    
+
     /*
       Initialize the CaDiCaL solver and allocate SAT variables for ReLUs
+      (currently only sets up the reverse map sentinel).
     */
     void _initializeSatSolver();
-    
-    // /*
-    //   Return the current phase of the given ReLU, according to _seenPhase.
-    //   If the ReLU is not present in _seenPhase, we treat it as UNSTABLE/UNKNOWN.
-    // */
-    ReLURuntimeState _getReluPhase( unsigned reluIndex ) const;
+
+    /*
+      Return the current phase of the given ReLU, according to _seenPhase.
+      If the ReLU is not present in _seenPhase, we treat it as Unstable/Unknown.
+    */
+    ReLURuntimeState _getReluPhase( unsigned reluVar ) const;
 
 
 
