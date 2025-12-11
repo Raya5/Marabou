@@ -21,6 +21,10 @@
 #include "Layer.h"
 #include <unordered_set>
 #include <algorithm>
+#include <chrono>
+#ifdef ENABLE_GUROBI
+#include "GurobiWrapper.h"
+#endif
 
 DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq,
                                         const Vector<Vector<double>> &allLbs,
@@ -388,10 +392,160 @@ bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
     Vector<double> lowerPrev, upperPrev;
     _getLayerBounds( prevLayer, lowerPrev, upperPrev );
 
-    // === Compute conditional bounds ===
-    double l_q_r0, u_q_r0, l_r_q0, u_r_q0;
-    _sliceMinMax_givenOtherZero( w_q, b_q, w_r, b_r, lowerPrev, upperPrev, l_q_r0, u_q_r0 );
-    _sliceMinMax_givenOtherZero( w_r, b_r, w_q, b_q, lowerPrev, upperPrev, l_r_q0, u_r_q0 );
+    // === Compute conditional bounds ===    // Choose mode locally:
+    // 0 = Compare (analytic + LP, assert tie, print speed ratio)
+    // 1 = Analytic only
+    // 2 = LP only
+    int pairSliceMode = 0;
+
+    // Final bounds used in classification
+    double l_q_r0 = 0.0;
+    double u_q_r0 = 0.0;
+    double l_r_q0 = 0.0;
+    double u_r_q0 = 0.0;
+
+    // Timing helpers (only actually used in compare mode)
+    auto now = []() {
+        return std::chrono::high_resolution_clock::now();
+    };
+
+    auto toMillis = []( auto start, auto end ) {
+        return std::chrono::duration_cast<std::chrono::microseconds>( end - start ).count() / 1000.0;
+    };
+
+    if ( pairSliceMode == 1 )
+    {
+        // --- ANALYTIC ONLY ---
+        _sliceMinMax_givenOtherZero( w_q, b_q, w_r, b_r,
+                                     lowerPrev, upperPrev,
+                                     l_q_r0, u_q_r0 );
+        _sliceMinMax_givenOtherZero( w_r, b_r, w_q, b_q,
+                                     lowerPrev, upperPrev,
+                                     l_r_q0, u_r_q0 );
+    }
+    else if ( pairSliceMode == 2 )
+    {
+        // --- LP ONLY ---
+#ifdef ENABLE_GUROBI
+        _sliceMinMax_givenOtherZero_LP( w_q, b_q, w_r, b_r,
+                                        lowerPrev, upperPrev,
+                                        l_q_r0, u_q_r0 );
+        _sliceMinMax_givenOtherZero_LP( w_r, b_r, w_q, b_q,
+                                        lowerPrev, upperPrev,
+                                        l_r_q0, u_r_q0 );
+#else
+        ASSERT( false && "pairSliceMode=2 (LP only) but ENABLE_GUROBI is false" );
+#endif
+    }
+    else // pairSliceMode == 0  (compare)
+    {
+        // === Compute conditional bounds with analytic helper ===
+        double l_q_r0_an, u_q_r0_an, l_r_q0_an, u_r_q0_an;
+        double l_q_r0_lp, u_q_r0_lp, l_r_q0_lp, u_r_q0_lp;
+
+        // --- analytic version timing ---
+        auto t0 = now();
+        _sliceMinMax_givenOtherZero( w_q, b_q, w_r, b_r,
+                                     lowerPrev, upperPrev,
+                                     l_q_r0_an, u_q_r0_an );
+        _sliceMinMax_givenOtherZero( w_r, b_r, w_q, b_q,
+                                     lowerPrev, upperPrev,
+                                     l_r_q0_an, u_r_q0_an );
+        auto t1 = now();
+        double analyticMs = toMillis( t0, t1 );
+
+        // --- LP version timing ---
+#ifdef ENABLE_GUROBI
+        auto t2 = now();
+        _sliceMinMax_givenOtherZero_LP( w_q, b_q, w_r, b_r,
+                                        lowerPrev, upperPrev,
+                                        l_q_r0_lp, u_q_r0_lp );
+        _sliceMinMax_givenOtherZero_LP( w_r, b_r, w_q, b_q,
+                                        lowerPrev, upperPrev,
+                                        l_r_q0_lp, u_r_q0_lp );
+        auto t3 = now();
+        double lpMs = toMillis( t2, t3 );
+#else
+        ASSERT( false && "pairSliceMode=0 (compare) but ENABLE_GUROBI is false" );
+        double lpMs = 0.0;
+        l_q_r0_lp = u_q_r0_lp = l_r_q0_lp = u_r_q0_lp = 0.0;
+#endif
+
+        auto betterLB = []( double an, double lp ) {
+            if ( !FloatUtils::isFinite( lp ) ) return "ANALYTIC (LP invalid)";
+            if ( FloatUtils::isPositive( lp - an ) ) return "LP";        // lp > an
+            if ( FloatUtils::isPositive( an - lp ) ) return "ANALYTIC";  // an > lp
+            return "TIE";
+        };
+
+        auto betterUB = []( double an, double lp ) {
+            if ( !FloatUtils::isFinite( lp ) ) return "ANALYTIC (LP invalid)";
+            if ( FloatUtils::isPositive( an - lp ) ) return "LP";        // lp < an
+            if ( FloatUtils::isPositive( lp - an ) ) return "ANALYTIC";  // an < lp
+            return "TIE";
+        };
+
+        auto crossesZero = []( double a, double b ) {
+            return ( FloatUtils::lt( a, 0.0 ) && FloatUtils::gt( b, 0.0 ) ) ||
+                   ( FloatUtils::gt( a, 0.0 ) && FloatUtils::lt( b, 0.0 ) );
+        };
+
+        const char *fasterTime =
+            FloatUtils::lt( analyticMs, lpMs ) ? "ANALYTIC" :
+            FloatUtils::lt( lpMs, analyticMs ) ? "LP" :
+                                                 "TIE";
+
+        // ratio = LP time / analytic time
+        double ratio = ( analyticMs > 0.0 ) ? ( lpMs / analyticMs ) : -1.0;
+
+        printf(
+            "[DA][pair %u,%u] analytic vs LP:"
+            " q|r=0: LB an=%.6f lp=%.6f (%s), UB an=%.6f lp=%.6f (%s);"
+            " r|q=0: LB an=%.6f lp=%.6f (%s), UB an=%.6f lp=%.6f (%s);"
+            " times: analytic=%.3fms, LP=%.3fms, ratio=%.3f, faster=%s\n",
+            q, r,
+            l_q_r0_an, l_q_r0_lp, betterLB( l_q_r0_an, l_q_r0_lp ),
+            u_q_r0_an, u_q_r0_lp, betterUB( u_q_r0_an, u_q_r0_lp ),
+            l_r_q0_an, l_r_q0_lp, betterLB( l_r_q0_an, l_r_q0_lp ),
+            u_r_q0_an, u_r_q0_lp, betterUB( u_r_q0_an, u_r_q0_lp ),
+            analyticMs, lpMs, ratio, fasterTime );
+
+        if ( crossesZero( l_q_r0_an, l_q_r0_lp ) )
+        {
+            printf( "[DA][pair %u,%u] SIGN-DIFF q|r=0 LB: analytic=%.9f, LP=%.9f\n",
+                    q, r, l_q_r0_an, l_q_r0_lp );
+        }
+
+        if ( crossesZero( u_q_r0_an, u_q_r0_lp ) )
+        {
+            printf( "[DA][pair %u,%u] SIGN-DIFF q|r=0 UB: analytic=%.9f, LP=%.9f\n",
+                    q, r, u_q_r0_an, u_q_r0_lp );
+        }
+
+        if ( crossesZero( l_r_q0_an, l_r_q0_lp ) )
+        {
+            printf( "[DA][pair %u,%u] SIGN-DIFF r|q=0 LB: analytic=%.9f, LP=%.9f\n",
+                    q, r, l_r_q0_an, l_r_q0_lp );
+        }
+
+        if ( crossesZero( u_r_q0_an, u_r_q0_lp ) )
+        {
+            printf( "[DA][pair %u,%u] SIGN-DIFF r|q=0 UB: analytic=%.9f, LP=%.9f\n",
+                    q, r, u_r_q0_an, u_r_q0_lp );
+        }
+
+        // Given your experiments: assert they are tied
+        ASSERT( FloatUtils::areEqual( l_q_r0_an, l_q_r0_lp ) );
+        ASSERT( FloatUtils::areEqual( u_q_r0_an, u_q_r0_lp ) );
+        ASSERT( FloatUtils::areEqual( l_r_q0_an, l_r_q0_lp ) );
+        ASSERT( FloatUtils::areEqual( u_r_q0_an, u_r_q0_lp ) );
+
+        // Use analytic values for the actual classification
+        l_q_r0 = l_q_r0_an;
+        u_q_r0 = u_q_r0_an;
+        l_r_q0 = l_r_q0_an;
+        u_r_q0 = u_r_q0_an;
+    }
 
     // === Debug info ===
     unsigned countTrue = 0;
@@ -696,7 +850,7 @@ void DependencyAnalyzer::_boxMinMax( const Vector<double> &a, double b,
     outMin = mn; outMax = mx;
 }
 
-void DependencyAnalyzer::_sliceMinMax_givenOtherZero( const Vector<double> &w_t, double b_t,
+void DependencyAnalyzer::_sliceMinMax_givenOtherZero_old( const Vector<double> &w_t, double b_t,
                                                       const Vector<double> &w_o, double b_o,
                                                       const Vector<double> &L, const Vector<double> &U,
                                                       double &outMin, double &outMax ) const
@@ -732,6 +886,248 @@ void DependencyAnalyzer::_sliceMinMax_givenOtherZero( const Vector<double> &w_t,
     // Box min/max on reduced form
     _boxMinMax( a, b, Lr, Ur, outMin, outMax );
 }
+
+void DependencyAnalyzer::_sliceMinMax_givenOtherZero( const Vector<double> &w_t, double b_t,
+                                                      const Vector<double> &w_o, double b_o,
+                                                      const Vector<double> &L, const Vector<double> &U,
+                                                      double &outMin, double &outMax ) const
+{
+    ASSERT( w_t.size() == w_o.size() && w_t.size() == L.size() && L.size() == U.size() );
+
+    const unsigned dim = w_t.size();
+    ASSERT( dim > 0 );
+
+    // 1) Baseline: box min/max without using the equality w_o·x + b_o = 0
+    double baseMin = 0.0;
+    double baseMax = 0.0;
+    _boxMinMax( w_t, b_t, L, U, baseMin, baseMax );
+
+    double bestMin = baseMin;  // we want largest possible lower bound
+    double bestMax = baseMax;  // we want smallest possible upper bound
+
+    // 2) Try all pivots k where w_o[k] != 0 AND w_t[k] != 0
+    //
+    // If w_t[k] == 0, eliminating x_k via the equality does not change y_t:
+    //   y_t = w_t·x + b_t still does not depend on x_k.
+    // Our approximate method does not constrain x_k back to [L_k, U_k], so
+    // these pivots cannot give anything better than the baseline; we can skip them.
+    for ( unsigned k = 0; k < dim; ++k )
+    {
+        const double denom = w_o[k];
+        if ( FloatUtils::isZero( denom ) )
+            continue;
+
+        if ( FloatUtils::isZero( w_t[k] ) )
+            continue;
+
+        // 2a) Constant term after eliminating x_k:
+        //
+        // x_k = -(b_o + sum_{j != k} w_o[j] x_j) / w_o[k]
+        // y_t = w_t·x + b_t
+        //     = sum_{j!=k} [w_t[j] - w_t[k]*(w_o[j]/w_o[k])] x_j  +  b_t - w_t[k]*(b_o/w_o[k])
+        //
+        double bPrime = b_t - ( w_t[k] * ( b_o / denom ) );
+
+        double mn_k = bPrime;
+        double mx_k = bPrime;
+
+        // 2b) Coefficients after substitution and their box contributions,
+        //     computed on the fly (no temporary vectors, no _boxMinMax call).
+        for ( unsigned j = 0; j < dim; ++j )
+        {
+            if ( j == k )
+                continue;
+
+            // coeff_j = w_t[j] - w_t[k] * (w_o[j] / w_o[k])
+            const double coeff = w_t[j] - ( w_t[k] * ( w_o[j] / denom ) );
+
+            if ( coeff >= 0.0 )
+            {
+                mn_k += coeff * L[j];
+                mx_k += coeff * U[j];
+            }
+            else
+            {
+                mn_k += coeff * U[j];
+                mx_k += coeff * L[j];
+            }
+        }
+
+        // 2c) Update best lower bound: we want the largest mn_k
+        if ( FloatUtils::gt( mn_k, bestMin ) )
+            bestMin = mn_k;
+
+        // 2d) Update best upper bound: we want the smallest mx_k
+        if ( FloatUtils::lt( mx_k, bestMax ) )
+            bestMax = mx_k;
+    }
+
+    outMin = bestMin;
+    outMax = bestMax;
+}
+
+
+
+#ifdef ENABLE_GUROBI
+
+bool DependencyAnalyzer::lpSliceOneDirection(
+    const Vector<double> &w_t, double b_t,
+    const Vector<double> &w_o, double b_o,
+    const Vector<double> &L,  const Vector<double> &U,
+    bool maximize,
+    double &outVal ) const
+{
+    ASSERT( w_t.size() == w_o.size() );
+    ASSERT( w_t.size() == L.size() && L.size() == U.size() );
+
+    const unsigned dim = w_t.size();
+
+    GurobiWrapper lp;
+    lp.setNumberOfThreads( 1 );
+    lp.setVerbosity( 0 );
+    lp.setTimeLimit( 0.05 );   // 50ms, tune as needed
+
+    Vector<String> varNames( dim );
+
+    for ( unsigned j = 0; j < dim; ++j )
+    {
+        String name = Stringf( "z_%u", j );
+        varNames[j] = name;
+        lp.addVariable( name, L[j], U[j], GurobiWrapper::CONTINUOUS );
+    }
+
+    // w_o·z = -b_o
+    List<GurobiWrapper::Term> eqTerms;
+    for ( unsigned j = 0; j < dim; ++j )
+        if ( !FloatUtils::isZero( w_o[j] ) )
+            eqTerms.append( GurobiWrapper::Term( w_o[j], varNames[j] ) );
+    lp.addEqConstraint( eqTerms, -b_o );
+
+    // Objective: w_t·z + b_t
+    List<GurobiWrapper::Term> objTerms;
+    for ( unsigned j = 0; j < dim; ++j )
+        if ( !FloatUtils::isZero( w_t[j] ) )
+            objTerms.append( GurobiWrapper::Term( w_t[j], varNames[j] ) );
+
+    if ( maximize )
+        lp.setObjective( objTerms, b_t );
+    else
+        lp.setCost( objTerms, b_t );
+
+    lp.solve();
+
+    if ( lp.infeasible() || !lp.haveFeasibleSolution() )
+        return false;
+
+    outVal = lp.getOptimalCostOrObjective();
+    return true;
+}
+
+#else
+
+bool DependencyAnalyzer::lpSliceOneDirection(
+    const Vector<double> &, double,
+    const Vector<double> &, double,
+    const Vector<double> &, const Vector<double> &,
+    bool, double & ) const
+{
+    ASSERT( false && "lpSliceOneDirection called with ENABLE_GUROBI = false" );
+    return false;
+}
+
+#endif
+
+#ifdef ENABLE_GUROBI
+
+void DependencyAnalyzer::_sliceMinMax_givenOtherZero_LP(
+    const Vector<double> &w_t, double b_t,
+    const Vector<double> &w_o, double b_o,
+    const Vector<double> &L,  const Vector<double> &U,
+    double &outMin, double &outMax ) const
+{
+    printf("\n[DA][LP-SLICE] === Begin LP slice (other=0) ===\n");
+
+    // Print sizes
+    printf("[DA][LP-SLICE] dim = %u\n", w_t.size());
+
+    // Print target neuron affine
+    // printf("[DA][LP-SLICE] Target y_t = w_t·z + b_t  (b_t = %.6f)\n", b_t);
+    // printf("[DA][LP-SLICE] w_t = [");
+    // for ( unsigned j = 0; j < w_t.size(); ++j )
+    //     printf(" %.4f", w_t[j]);
+    // printf(" ]\n");
+
+    // Print conditioning neuron affine
+    // printf("[DA][LP-SLICE] Condition y_o = 0 = w_o·z + b_o  (b_o = %.6f)\n", b_o);
+    // printf("[DA][LP-SLICE] w_o = [");
+    // for ( unsigned j = 0; j < w_o.size(); ++j )
+    //     printf(" %.4f", w_o[j]);
+    // printf(" ]\n");
+
+    // Print box bounds
+    // printf("[DA][LP-SLICE] Box bounds L,U per coordinate:\n");
+    // for ( unsigned j = 0; j < L.size(); ++j )
+    //     printf("    j=%u : [ %.4f , %.4f ]\n", j, L[j], U[j]);
+
+    double mn, mx;
+
+    // Solve MIN LP
+    bool okMin = lpSliceOneDirection(
+        w_t, b_t,
+        w_o, b_o,
+        L, U,
+        /*maximize=*/false,
+        mn
+    );
+
+    printf("[DA][LP-SLICE] LP result (MIN): ");
+    if ( okMin ) printf("mn = %.9f\n", mn);
+    else         printf("INFEASIBLE\n");
+
+    // Solve MAX LP
+    bool okMax = lpSliceOneDirection(
+        w_t, b_t,
+        w_o, b_o,
+        L, U,
+        /*maximize=*/true,
+        mx
+    );
+
+    printf("[DA][LP-SLICE] LP result (MAX): ");
+    if ( okMax ) printf("mx = %.9f\n", mx);
+    else         printf("INFEASIBLE\n");
+
+    // Infeasible slice: no point in the box satisfies y_o=0
+    if ( !okMin || !okMax )
+    {
+        printf("[DA][LP-SLICE] *** No feasible slice: marking bounds as +/- infinity ***\n");
+        outMin = FloatUtils::infinity();
+        outMax = -FloatUtils::infinity();
+        printf("[DA][LP-SLICE] === End LP slice (FAILED) ===\n\n");
+        return;
+    }
+
+    // Store results
+    outMin = mn;
+    outMax = mx;
+
+    printf("[DA][LP-SLICE] Final LP bounds:  min = %.9f , max = %.9f\n", outMin, outMax);
+    printf("[DA][LP-SLICE] === End LP slice ===\n\n");
+}
+
+#else // !ENABLE_GUROBI
+
+void DependencyAnalyzer::_sliceMinMax_givenOtherZero_LP(
+    const Vector<double> &w_t, double b_t,
+    const Vector<double> &w_o, double b_o,
+    const Vector<double> &L,  const Vector<double> &U,
+    double &outMin, double &outMax ) const
+{
+    // Fallback: if Gurobi is disabled, just use the analytic version
+    _sliceMinMax_givenOtherZero( w_t, b_t, w_o, b_o, L, U, outMin, outMax );
+}
+
+#endif
 
 bool DependencyAnalyzer::notifyNeuronFixed( unsigned newVar, ReLUState state )
 {

@@ -144,10 +144,37 @@ public:
       Compute min/max of target (w_t·x + b_t) subject to box L<=x<=U and equality (w_o·x + b_o = 0).
       Uses a single-variable elimination with argmax-abs pivot from w_o.
     */
+    void _sliceMinMax_givenOtherZero_old( const Vector<double> &w_target, double b_target,
+                                      const Vector<double> &w_other,  double b_other,
+                                      const Vector<double> &L, const Vector<double> &U,
+                                      double &outMin, double &outMax ) const;
+    /*
+      Compute min/max of target (w_t·x + b_t) subject to box L<=x<=U and equality (w_o·x + b_o = 0).
+      Uses a single-variable elimination with argmax-abs pivot from w_o.
+    */
     void _sliceMinMax_givenOtherZero( const Vector<double> &w_target, double b_target,
                                       const Vector<double> &w_other,  double b_other,
                                       const Vector<double> &L, const Vector<double> &U,
                                       double &outMin, double &outMax ) const;
+
+    /*
+      TODO
+    */
+    bool lpSliceOneDirection(
+        const Vector<double> &w_t, double b_t,
+        const Vector<double> &w_o, double b_o,
+        const Vector<double> &L,  const Vector<double> &U,
+        bool maximize,
+        double &outVal ) const;
+
+    /*
+      TODO
+    */
+    void _sliceMinMax_givenOtherZero_LP(
+        const Vector<double> &w_t, double b_t,
+        const Vector<double> &w_o, double b_o,
+        const Vector<double> &L,  const Vector<double> &U,
+        double &outMin, double &outMax ) const;
 
     /*
       Interval extrema over a box for affine form a·x + b (no equalities).
