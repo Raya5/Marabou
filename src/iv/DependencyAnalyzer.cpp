@@ -1544,6 +1544,7 @@ void DependencyAnalyzer::_emitTighteningsForImpliedPhase( unsigned reluVar,
 void DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tightenings )
 {
     debugPrintSatClauses();
+    _activeDepIds.clear();
     printf("\n[DA][SAT] ===== getImpliedTighteningsFromSat =====\n");
 
     // 3.1 Build assumptions from _seenPhase and call assume inline
