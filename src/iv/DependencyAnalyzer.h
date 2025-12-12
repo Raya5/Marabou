@@ -30,6 +30,7 @@
 #include "context/context.h"
 #include "Preprocessor.h"
 #include "cadical.hpp"
+#include <boost/dynamic_bitset.hpp>
 
 
 // #include <memory>
@@ -44,6 +45,11 @@ struct BoundsSnapshot {
 class DependencyAnalyzer
 {
 public:
+    /*
+      TODO
+    */  
+    typedef boost::dynamic_bitset<> Bitmask;
+
     /*
       Construct the analyzer from a base InputQuery.
       NOTE: The analyzer does not take ownership; the caller must ensure
@@ -118,7 +124,16 @@ public:
                               unsigned q, unsigned r,
                               Dependency &outDependency );
 
+    /*
+      TODO
+    */
     bool _isSupersetOfKnownDependency(const std::vector<unsigned> &variables) const;
+
+    // --- Bitmask-based minimal dependency tracking ---
+    Bitmask _buildDependencyBitmask(const std::vector<unsigned> &variables) const;
+    Bitmask _buildDependencySubBitmask(const std::vector<unsigned> &variables) const;
+    bool _isNonMinimalDependency(const Bitmask &depMask) const;
+    void _recordMinimalDependencyBitmask(const Bitmask &depMask);
 
     /*
       Record a discovered dependency in the internal storage for its layer.
@@ -194,7 +209,7 @@ public:
     bool analyzeTripleConflict( unsigned layerIndex,
                                 unsigned q, unsigned r, unsigned s,
                                 Dependency &outDependency );
-                                
+
     /*
       TODO
     */
@@ -374,10 +389,18 @@ private:
     // Vector from SAT variable (1..N) → ReLU variable index.
     Vector<unsigned> _satVarToReluIndex;
 
+    // Stores all known minimal dependencies as bitmasks (SAT-var indexed)
+    std::vector<Bitmask> _minimalDependencyBitmasks;
+
+    // Set once after preprocessing (e.g. in buildFromBase or setContext)
+    unsigned _bitmaskSize = 0;
+
     // --- Helper functions ---
 
     // Returns the SAT solver variable for this ReLU variable, creating one if needed.
-    unsigned reluIndexToSatVar( unsigned reluVar );
+    unsigned reluIndexToSatVar(unsigned reluVar) const;           // const, non-creating
+    unsigned reluIndexToSatVarForce(unsigned reluVar);            // force-creating
+    unsigned _createNewSatVarForRelu(unsigned reluVar);           // internal helper
 
     // Returns the ReLU variable index for a SAT solver variable, asserting correctness.
     unsigned satVarToReluIndex( unsigned satVar ) const;
@@ -402,6 +425,14 @@ private:
     void _emitTighteningsForImpliedPhase( unsigned reluVar,
                                           ReLUState impliedPhase,
                                           List<Tightening> &tightenings );
+
+    /*
+      TODO
+    */
+#ifdef ENABLE_GUROBI
+    mutable GurobiWrapper _lpReusable;
+    mutable bool _lpReusableInitialized = false;
+#endif
 
 
     /**************** For Debugging ********************/

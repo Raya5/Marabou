@@ -56,6 +56,7 @@ DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq,
         _baseIpq->getNumberOfEquations());
 
     _collectAllUnstableNeurons();
+    _bitmaskSize = _unstableNeurons.size();
     _initializeSatSolver();
 }
 
@@ -385,7 +386,49 @@ bool DependencyAnalyzer::detectAndRecordTripleConflict( unsigned layerIndex,
     unsigned originalVarS = _baseIpqPreprocessor.getOldIndex( varS );
 
     std::vector<unsigned> vars = { originalVarQ, originalVarR, originalVarS };
-    if ( _isSupersetOfKnownDependency( vars ) )
+
+    // === Dependency subset pruning mode ===
+    // 0 = Compare (bitmask + watcher), assert tie, print timing
+    // 1 = Bitmask only
+    // 2 = Watcher-based only
+    int dependencySubsetMode = 1;
+
+    bool issuperset = false;
+
+    if (dependencySubsetMode == 0)
+    {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        Bitmask depMask = _buildDependencyBitmask(vars);
+        bool bitmaskResult = _isNonMinimalDependency(depMask);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        bool originalResult = _isSupersetOfKnownDependency(vars);
+        auto t2 = std::chrono::high_resolution_clock::now();
+
+        double timeBitmask  = std::chrono::duration<double, std::micro>(t1 - t0).count();  // µs
+        double timeOriginal = std::chrono::duration<double, std::micro>(t2 - t1).count();
+
+        printf("[DA][timing] Bitmask:  %.3f µs\n", timeBitmask);
+        printf("[DA][timing] Original: %.3f µs\n", timeOriginal);
+        printf("[DA][timing] Faster:   %s\n", (timeBitmask < timeOriginal ? "Bitmask" : "Original"));
+
+        ASSERT(bitmaskResult == originalResult);
+        issuperset = bitmaskResult;
+    }
+    else if (dependencySubsetMode == 1)
+    {
+        Bitmask depMask = _buildDependencyBitmask(vars);
+        issuperset = _isNonMinimalDependency(depMask);
+    }
+    else if (dependencySubsetMode == 2)
+    {
+        issuperset = _isSupersetOfKnownDependency(vars);
+    }
+    else
+    {
+        ASSERT(false && "Invalid dependencySubsetMode");
+    }
+
+    if (issuperset)
         return false;
 
     Dependency d;
@@ -408,12 +451,56 @@ bool DependencyAnalyzer::detectAndRecordPairConflict(unsigned layerIndex,
     unsigned originalVarR = _baseIpqPreprocessor.getOldIndex( varR );
 
     std::vector<unsigned> vars = { originalVarQ, originalVarR };
-    if (_isSupersetOfKnownDependency(vars))
+
+
+    // === Dependency subset pruning mode ===
+    // 0 = Compare (bitmask + watcher), assert tie, print timing
+    // 1 = Bitmask only
+    // 2 = Watcher-based only
+    int dependencySubsetMode = 1;
+
+    bool issuperset = false;
+
+    if (dependencySubsetMode == 0)
+    {
+        auto t0 = std::chrono::high_resolution_clock::now();
+        Bitmask depMask = _buildDependencyBitmask(vars);
+        bool bitmaskResult = _isNonMinimalDependency(depMask);
+        auto t1 = std::chrono::high_resolution_clock::now();
+        bool originalResult = _isSupersetOfKnownDependency(vars);
+        auto t2 = std::chrono::high_resolution_clock::now();
+
+        double timeBitmask  = std::chrono::duration<double, std::micro>(t1 - t0).count();  // µs
+        double timeOriginal = std::chrono::duration<double, std::micro>(t2 - t1).count();
+
+        printf("[DA][timing] Bitmask:  %.3f µs\n", timeBitmask);
+        printf("[DA][timing] Original: %.3f µs\n", timeOriginal);
+        printf("[DA][timing] Faster:   %s\n", (timeBitmask < timeOriginal ? "Bitmask" : "Original"));
+
+        ASSERT(bitmaskResult == originalResult);
+        issuperset = bitmaskResult;
+    }
+    else if (dependencySubsetMode == 1)
+    {
+        Bitmask depMask = _buildDependencyBitmask(vars);
+        issuperset = _isNonMinimalDependency(depMask);
+    }
+    else if (dependencySubsetMode == 2)
+    {
+        issuperset = _isSupersetOfKnownDependency(vars);
+    }
+    else
+    {
+        ASSERT(false && "Invalid dependencySubsetMode");
+    }
+
+    if (issuperset)
         return false;
 
     Dependency d;
     if (!analyzePairConflict(layerIndex, q, r, d))
         return false;
+
     return recordConflict(std::move(d));
 }
 
@@ -715,7 +802,7 @@ bool DependencyAnalyzer::analyzeTripleConflict( unsigned layerIndex,
     // 0 = Compare (analytic + LP, assert tie, print speed ratio)
     // 1 = Analytic only
     // 2 = LP only
-    int tripleSliceMode = 0;
+    int tripleSliceMode = 2;
 
     // Final bounds used in classification:
     // q | (r=0,s=0)
@@ -901,10 +988,18 @@ bool DependencyAnalyzer::lpSliceTwoEqOneDirection(
 
     const unsigned dim = w_t.size();
 
-    GurobiWrapper lp;
-    lp.setNumberOfThreads( 1 );
-    lp.setVerbosity( 0 );
-    lp.setTimeLimit( 0.05 ); // tune as needed
+    GurobiWrapper &lp = _lpReusable;
+
+    if ( !_lpReusableInitialized )
+    {
+        lp.setNumberOfThreads( 1 );
+        lp.setVerbosity( 0 );
+        lp.setTimeLimit( 0.05 );
+        _lpReusableInitialized = true;
+    }
+
+    // Important: clear old variables/constraints/objective
+    lp.resetModel();
 
     Vector<String> varNames( dim );
     for ( unsigned j = 0; j < dim; ++j )
@@ -1080,6 +1175,79 @@ void DependencyAnalyzer::_sliceMinMax_givenOther2Zero( const Vector<double> &w_t
 
     outMin = bestMin;
     outMax = bestMax;
+}
+
+DependencyAnalyzer::Bitmask DependencyAnalyzer::_buildDependencyBitmask(const std::vector<unsigned> &variables) const
+{
+    Bitmask depMask(_bitmaskSize);  // assumes _bitmaskSize = _preprocessedQuery->getNumberOfVariables()
+
+    for (unsigned oldVar : variables)
+    {
+        unsigned satVar = reluIndexToSatVar(oldVar);
+        if (satVar == 0)
+        {
+            printf("[DA][bitmask] ERROR: reluVar %u has no SAT var mapping\n", oldVar);
+            ASSERT(false);
+        }
+
+        ASSERT(satVar < depMask.size());
+        depMask.set(satVar);
+    }
+
+    return depMask;
+}
+DependencyAnalyzer::Bitmask DependencyAnalyzer::_buildDependencySubBitmask(const std::vector<unsigned> &variables) const
+{
+    Bitmask depMask(_bitmaskSize);  // assumes _bitmaskSize = _preprocessedQuery->getNumberOfVariables()
+
+    for (unsigned oldVar : variables)
+    {
+        unsigned satVar = reluIndexToSatVar(oldVar);
+        if (satVar == 0)
+        {
+            continue;  // skip variables with no SAT mapping
+        }
+
+        ASSERT(satVar < depMask.size());
+        depMask.set(satVar);
+    }
+
+    return depMask;
+}
+
+bool DependencyAnalyzer::_isNonMinimalDependency(const Bitmask &depMask) const
+{
+    for (const Bitmask &known : _minimalDependencyBitmasks)
+    {
+        if (known.size() > depMask.size())
+            continue;
+
+        if ((known & depMask) == known)
+            return true;  // depMask is a superset of an existing minimal dep
+    }
+
+    return false;
+}
+
+void DependencyAnalyzer::_recordMinimalDependencyBitmask(const Bitmask &depMask)
+{
+    // Remove supersets of depMask
+    std::vector<size_t> toRemove;
+    for (size_t i = 0; i < _minimalDependencyBitmasks.size(); ++i)
+    {
+        const Bitmask &existing = _minimalDependencyBitmasks[i];
+        Bitmask resized = depMask;
+        resized.resize(existing.size());
+
+        if ((existing & resized) == resized)
+            toRemove.push_back(i);
+    }
+
+    for (auto it = toRemove.rbegin(); it != toRemove.rend(); ++it)
+        _minimalDependencyBitmasks.erase(_minimalDependencyBitmasks.begin() + *it);
+
+    _minimalDependencyBitmasks.push_back(depMask);
+    printf("[DA][bitmask] inserted new minimal dep mask, size=%zu\n", depMask.count());
 }
 
 
@@ -1267,6 +1435,8 @@ bool DependencyAnalyzer::recordConflict( Dependency d )
         bucket.append( id );
     }
     addDependenciesTocadical(d);
+    Bitmask depMask = _buildDependencyBitmask(vars);
+    _recordMinimalDependencyBitmask(depMask);
 
     return true; // Return true if newly inserted 
 }
@@ -1449,10 +1619,18 @@ bool DependencyAnalyzer::lpSliceOneDirection(
 
     const unsigned dim = w_t.size();
 
-    GurobiWrapper lp;
-    lp.setNumberOfThreads( 1 );
-    lp.setVerbosity( 0 );
-    lp.setTimeLimit( 0.05 );   // 50ms, tune as needed
+    GurobiWrapper &lp = _lpReusable;
+
+    if ( !_lpReusableInitialized )
+    {
+        lp.setNumberOfThreads( 1 );
+        lp.setVerbosity( 0 );
+        lp.setTimeLimit( 0.05 );
+        _lpReusableInitialized = true;
+    }
+
+    // Important: clear old variables/constraints/objective
+    lp.resetModel();
 
     Vector<String> varNames( dim );
 
@@ -2278,27 +2456,30 @@ ReLURuntimeState DependencyAnalyzer::_getReluPhase( unsigned reluVar ) const
     return state;
 }
 
-unsigned DependencyAnalyzer::reluIndexToSatVar( unsigned reluVar )
+unsigned DependencyAnalyzer::reluIndexToSatVar(unsigned reluVar) const
 {
-    // Check if already exists
-    auto it = _reluIndexToSatVar.find( reluVar );
-    if ( it != _reluIndexToSatVar.end() )
-        return it->second;
+    auto it = _reluIndexToSatVar.find(reluVar);
+    if (it == _reluIndexToSatVar.end())
+        return 0;  // 0 means "not mapped"
+    return it->second;
+}
+unsigned DependencyAnalyzer::reluIndexToSatVarForce(unsigned reluVar)
+{
+    unsigned existing = reluIndexToSatVar(reluVar);
+    if (existing != 0)
+        return existing;
 
-    // Create new SAT variable index. We rely on CaDiCaL's ability to grow
-    // its internal variable range when it first sees this index in clauses.
-    //
-    // _satVarToReluIndex[0] is unused; size() gives the next available index.
-    unsigned newSatVar = _satVarToReluIndex.size();
-    printf("[DA][reluIndexToSatVar] for ReLU var %u new SAT var is %u\n",
-           reluVar, newSatVar);
+    return _createNewSatVarForRelu(reluVar);
+}
+unsigned DependencyAnalyzer::_createNewSatVarForRelu(unsigned reluVar)
+{
+    unsigned newSatVar = _satVarToReluIndex.size();  // SAT vars start at 1
+    ASSERT(newSatVar > 0);  // sanity
 
-    printf("[DA][SAT]   _cadical.vars() = %d\n", _cadical.vars());
-    // No need to call new_var() explicitly here.
+    printf("[DA][SAT] Assigning SAT var %u to ReLU var %u\n", newSatVar, reluVar);
 
-    // Store forward + reverse mapping
     _reluIndexToSatVar[reluVar] = newSatVar;
-    _satVarToReluIndex.append( reluVar );
+    _satVarToReluIndex.append(reluVar);
 
     return newSatVar;
 }
@@ -2318,7 +2499,7 @@ int DependencyAnalyzer::phaseToLit( unsigned reluVar,
     ASSERT( phase == ReLUState::Active ||
             phase == ReLUState::Inactive );
 
-    unsigned satVar = reluIndexToSatVar( reluVar );
+    unsigned satVar = reluIndexToSatVarForce( reluVar );
     int lit = (phase == ReLUState::Active) ? (int)satVar : -(int)satVar;
 
     printf("[DA][SAT] phaseToLit: reluVar=%u, phase=%s -> lit=%d\n",

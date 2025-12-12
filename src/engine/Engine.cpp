@@ -196,7 +196,8 @@ bool Engine::solve( double timeoutInSeconds )
     SignalHandler::getInstance()->registerClient( this );
 
     // --- incremental ---
-    if ( _dependencyAnalyzer ) {
+    if ( _incrementalMode ) {
+        ASSERT( _dependencyAnalyzer );
         ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
         printf( "[Engine] Context to be set in analyzer.\n" );
         _dependencyAnalyzer->setContext( &_context);
@@ -268,7 +269,9 @@ bool Engine::solve( double timeoutInSeconds )
                 printf( "Final statistics:\n" );
                 _statistics.print();
             }
-            if ( _dependencyAnalyzer ) {
+            if ( _incrementalMode ) {
+                ASSERT( _dependencyAnalyzer );
+                ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
                 _dependencyAnalyzer->notifyQuerySolved();
             }
             _exitCode = Engine::TIMEOUT;
@@ -335,9 +338,6 @@ bool Engine::solve( double timeoutInSeconds )
                     printf("[Engine][IV] After-split phase → applyDependencyAnalyzerTightenings()\n");
                     applyDependencyAnalyzerTightenings();
                 }
-
-                printf("********* Starting IV *********\n");
-                // call dependency analysis
                 informLPSolverOfBounds();
                 splitJustPerformed = false;
             }
@@ -388,7 +388,9 @@ bool Engine::solve( double timeoutInSeconds )
                             ASSERT( _UNSATCertificateCurrentPointer );
                             ( **_UNSATCertificateCurrentPointer ).setSATSolutionFlag();
                         }
-                        if ( _dependencyAnalyzer ) {
+                        if ( _incrementalMode ) {
+                            ASSERT( _dependencyAnalyzer );
+                            ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
                             _dependencyAnalyzer->notifyQuerySolved();
                         }
                         _exitCode = Engine::SAT;
@@ -405,7 +407,9 @@ bool Engine::solve( double timeoutInSeconds )
                             printf( "\nEngine::solve: at leaf node but solving inconclusive\n" );
                             _statistics.print();
                         }
-                        if ( _dependencyAnalyzer ) {
+                        if ( _incrementalMode ) {
+                            ASSERT( _dependencyAnalyzer );
+                            ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
                             _dependencyAnalyzer->notifyQuerySolved();
                         }
                         _exitCode = Engine::UNKNOWN;
@@ -469,7 +473,9 @@ bool Engine::solve( double timeoutInSeconds )
                     printf( "\nEngine::solve: unsat query\n" );
                     _statistics.print();
                 }
-                if ( _dependencyAnalyzer ) {
+                if ( _incrementalMode ) {
+                    ASSERT( _dependencyAnalyzer );
+                    ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
                     _dependencyAnalyzer->notifyQuerySolved();
                 }
                 _exitCode = Engine::UNSAT;
