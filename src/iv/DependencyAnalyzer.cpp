@@ -317,23 +317,82 @@ unsigned DependencyAnalyzer::computeSameLayerDependencies( unsigned weightedSumL
         printf("[DA] not enough unstable neurons: %zu .\n", unstable.size());
         return 0;
     }
-    // auto &bucket = _pairsByLayer[ weightedSumLayerIndex ];
-    unsigned added = 0;
-    
+    unsigned addedPairs   = 0;
+    unsigned addedTriples = 0;
+
     // enumerate unordered pairs
-    for ( size_t i = 0; i + 1 < unstable.size(); ++i ) {
+    for ( size_t i = 0; i + 1 < unstable.size(); ++i )
+    {
         unsigned q = unstable[i];
-        for ( size_t j = i + 1; j < unstable.size(); ++j ) {
+        for ( size_t j = i + 1; j < unstable.size(); ++j )
+        {
             unsigned r = unstable[j];
-            ASSERT(q < r);
-            if (detectAndRecordPairConflict(weightedSumLayerIndex, q, r))
-                ++added;
+            ASSERT( q < r );
+            if ( detectAndRecordPairConflict( weightedSumLayerIndex, q, r ) )
+                ++addedPairs;
         }
     }
-    printf("[DA] layer %u: scanned %zu pairs, added %u conflicts\n",
-           weightedSumLayerIndex, ( unstable.size() * ( unstable.size() - 1 ) ) / 2, added );
 
-    return added;
+    // enumerate unordered triples
+    if ( unstable.size() >= 3 )
+    {
+        for ( size_t i = 0; i + 2 < unstable.size(); ++i )
+        {
+            unsigned q = unstable[i];
+            for ( size_t j = i + 1; j + 1 < unstable.size(); ++j )
+            {
+                unsigned r = unstable[j];
+                for ( size_t k = j + 1; k < unstable.size(); ++k )
+                {
+                    unsigned s = unstable[k];
+                    ASSERT( q < r && r < s );
+                    if ( detectAndRecordTripleConflict( weightedSumLayerIndex, q, r, s ) )
+                        ++addedTriples;
+                }
+            }
+        }
+    }
+
+    const size_t scannedPairs =
+        ( unstable.size() * ( unstable.size() - 1 ) ) / 2;
+
+    const size_t scannedTriples =
+        ( unstable.size() >= 3 ) ?
+        ( unstable.size() * ( unstable.size() - 1 ) * ( unstable.size() - 2 ) ) / 6 :
+        0;
+
+    printf( "[DA] layer %u: scanned %zu pairs, added %u pair-conflicts; "
+            "scanned %zu triples, added %u triple-conflicts\n",
+            weightedSumLayerIndex,
+            scannedPairs, addedPairs,
+            scannedTriples, addedTriples );
+
+    return addedPairs + addedTriples;
+}
+
+bool DependencyAnalyzer::detectAndRecordTripleConflict( unsigned layerIndex,
+                                                        unsigned q, unsigned r, unsigned s )
+{
+    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
+    ASSERT( weightedSumLayer );
+
+    unsigned varQ = weightedSumLayer->neuronToVariable( q );
+    unsigned varR = weightedSumLayer->neuronToVariable( r );
+    unsigned varS = weightedSumLayer->neuronToVariable( s );
+
+    unsigned originalVarQ = _baseIpqPreprocessor.getOldIndex( varQ );
+    unsigned originalVarR = _baseIpqPreprocessor.getOldIndex( varR );
+    unsigned originalVarS = _baseIpqPreprocessor.getOldIndex( varS );
+
+    std::vector<unsigned> vars = { originalVarQ, originalVarR, originalVarS };
+    if ( _isSupersetOfKnownDependency( vars ) )
+        return false;
+
+    Dependency d;
+    if ( !analyzeTripleConflict( layerIndex, q, r, s, d ) )
+        return false;
+
+    return recordConflict( std::move( d ) );
 }
 
 
@@ -396,7 +455,7 @@ bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
     // 0 = Compare (analytic + LP, assert tie, print speed ratio)
     // 1 = Analytic only
     // 2 = LP only
-    int pairSliceMode = 0;
+    int pairSliceMode = 1;
 
     // Final bounds used in classification
     double l_q_r0 = 0.0;
@@ -615,6 +674,414 @@ bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
 
     return true; // dependency found and written to outDependency
 }
+
+bool DependencyAnalyzer::analyzeTripleConflict( unsigned layerIndex,
+                                                unsigned q, unsigned r, unsigned s,
+                                                Dependency &outDependency )
+{
+    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
+    ASSERT( weightedSumLayer );
+    ASSERT( weightedSumLayer->getLayerType() == NLR::Layer::WEIGHTED_SUM );
+
+    const unsigned layerSize = weightedSumLayer->getSize();
+    ASSERT( q < layerSize && r < layerSize && s < layerSize );
+    ASSERT( q < r && r < s );
+    (void)layerSize;
+
+    const auto &sources = weightedSumLayer->getSourceLayers();
+    ASSERT( sources.size() == 1 );
+    const unsigned prevLayerIndex = sources.begin()->first;
+    const NLR::Layer *prevLayer = _networkLevelReasoner->getLayer( prevLayerIndex );
+    ASSERT( prevLayer );
+    const unsigned prevSize = prevLayer->getSize();
+
+    // === Collect weight rows and biases ===
+    Vector<double> w_q( prevSize ), w_r( prevSize ), w_s( prevSize );
+    for ( unsigned j = 0; j < prevSize; ++j )
+    {
+        w_q[j] = weightedSumLayer->getWeight( prevLayerIndex, j, q );
+        w_r[j] = weightedSumLayer->getWeight( prevLayerIndex, j, r );
+        w_s[j] = weightedSumLayer->getWeight( prevLayerIndex, j, s );
+    }
+
+    const double b_q = weightedSumLayer->getBias( q );
+    const double b_r = weightedSumLayer->getBias( r );
+    const double b_s = weightedSumLayer->getBias( s );
+
+    Vector<double> lowerPrev, upperPrev;
+    _getLayerBounds( prevLayer, lowerPrev, upperPrev );
+
+    // === Compute conditional bounds (triple) ===
+    // 0 = Compare (analytic + LP, assert tie, print speed ratio)
+    // 1 = Analytic only
+    // 2 = LP only
+    int tripleSliceMode = 0;
+
+    // Final bounds used in classification:
+    // q | (r=0,s=0)
+    double l_q_rs0 = 0.0, u_q_rs0 = 0.0;
+    // r | (q=0,s=0)
+    double l_r_qs0 = 0.0, u_r_qs0 = 0.0;
+    // s | (q=0,r=0)
+    double l_s_qr0 = 0.0, u_s_qr0 = 0.0;
+
+    auto now = []() { return std::chrono::high_resolution_clock::now(); };
+    auto toMillis = []( auto start, auto end ) {
+        return std::chrono::duration_cast<std::chrono::microseconds>( end - start ).count() / 1000.0;
+    };
+
+    if ( tripleSliceMode == 1 )
+    {
+        // --- ANALYTIC ONLY ---
+        _sliceMinMax_givenOther2Zero( w_q, b_q, w_r, b_r, w_s, b_s,
+                                      lowerPrev, upperPrev, l_q_rs0, u_q_rs0 );
+
+        _sliceMinMax_givenOther2Zero( w_r, b_r, w_q, b_q, w_s, b_s,
+                                      lowerPrev, upperPrev, l_r_qs0, u_r_qs0 );
+
+        _sliceMinMax_givenOther2Zero( w_s, b_s, w_q, b_q, w_r, b_r,
+                                      lowerPrev, upperPrev, l_s_qr0, u_s_qr0 );
+    }
+    else if ( tripleSliceMode == 2 )
+    {
+        // --- LP ONLY ---
+#ifdef ENABLE_GUROBI
+        _sliceMinMax_givenOther2Zero_LP( w_q, b_q, w_r, b_r, w_s, b_s,
+                                         lowerPrev, upperPrev, l_q_rs0, u_q_rs0 );
+
+        _sliceMinMax_givenOther2Zero_LP( w_r, b_r, w_q, b_q, w_s, b_s,
+                                         lowerPrev, upperPrev, l_r_qs0, u_r_qs0 );
+
+        _sliceMinMax_givenOther2Zero_LP( w_s, b_s, w_q, b_q, w_r, b_r,
+                                         lowerPrev, upperPrev, l_s_qr0, u_s_qr0 );
+#else
+        ASSERT( false && "tripleSliceMode=2 (LP only) but ENABLE_GUROBI is false" );
+#endif
+    }
+    else
+    {
+        // --- COMPARE ---
+        double l_q_rs0_an, u_q_rs0_an, l_r_qs0_an, u_r_qs0_an, l_s_qr0_an, u_s_qr0_an;
+        double l_q_rs0_lp, u_q_rs0_lp, l_r_qs0_lp, u_r_qs0_lp, l_s_qr0_lp, u_s_qr0_lp;
+
+        auto t0 = now();
+        _sliceMinMax_givenOther2Zero( w_q, b_q, w_r, b_r, w_s, b_s,
+                                      lowerPrev, upperPrev, l_q_rs0_an, u_q_rs0_an );
+        _sliceMinMax_givenOther2Zero( w_r, b_r, w_q, b_q, w_s, b_s,
+                                      lowerPrev, upperPrev, l_r_qs0_an, u_r_qs0_an );
+        _sliceMinMax_givenOther2Zero( w_s, b_s, w_q, b_q, w_r, b_r,
+                                      lowerPrev, upperPrev, l_s_qr0_an, u_s_qr0_an );
+        auto t1 = now();
+        double analyticMs = toMillis( t0, t1 );
+
+#ifdef ENABLE_GUROBI
+        auto t2 = now();
+        _sliceMinMax_givenOther2Zero_LP( w_q, b_q, w_r, b_r, w_s, b_s,
+                                         lowerPrev, upperPrev, l_q_rs0_lp, u_q_rs0_lp );
+        _sliceMinMax_givenOther2Zero_LP( w_r, b_r, w_q, b_q, w_s, b_s,
+                                         lowerPrev, upperPrev, l_r_qs0_lp, u_r_qs0_lp );
+        _sliceMinMax_givenOther2Zero_LP( w_s, b_s, w_q, b_q, w_r, b_r,
+                                         lowerPrev, upperPrev, l_s_qr0_lp, u_s_qr0_lp );
+        auto t3 = now();
+        double lpMs = toMillis( t2, t3 );
+#else
+        ASSERT( false && "tripleSliceMode=0 (compare) but ENABLE_GUROBI is false" );
+        double lpMs = 0.0;
+        l_q_rs0_lp = u_q_rs0_lp = l_r_qs0_lp = u_r_qs0_lp = l_s_qr0_lp = u_s_qr0_lp = 0.0;
+#endif
+
+        double ratio = ( analyticMs > 0.0 ) ? ( lpMs / analyticMs ) : -1.0;
+
+        printf( "[DA][triple %u,%u,%u] times: analytic=%.3fms LP=%.3fms ratio=%.3f\n",
+                q, r, s, analyticMs, lpMs, ratio );
+
+        // For now: assert equality like you did for pairs (once you confirm it holds)
+        ASSERT( FloatUtils::areEqual( l_q_rs0_an, l_q_rs0_lp ) );
+        ASSERT( FloatUtils::areEqual( u_q_rs0_an, u_q_rs0_lp ) );
+        ASSERT( FloatUtils::areEqual( l_r_qs0_an, l_r_qs0_lp ) );
+        ASSERT( FloatUtils::areEqual( u_r_qs0_an, u_r_qs0_lp ) );
+        ASSERT( FloatUtils::areEqual( l_s_qr0_an, l_s_qr0_lp ) );
+        ASSERT( FloatUtils::areEqual( u_s_qr0_an, u_s_qr0_lp ) );
+
+        // Use analytic for actual classification
+        l_q_rs0 = l_q_rs0_an; u_q_rs0 = u_q_rs0_an;
+        l_r_qs0 = l_r_qs0_an; u_r_qs0 = u_r_qs0_an;
+        l_s_qr0 = l_s_qr0_an; u_s_qr0 = u_s_qr0_an;
+    }
+
+    // === Boolean classification (same idea as pair, but for 3) ===
+    const bool q_forced_active   = FloatUtils::gt( l_q_rs0, 0.0 );
+    const bool q_forced_inactive = FloatUtils::lt( u_q_rs0, 0.0 );
+
+    const bool r_forced_active   = FloatUtils::gt( l_r_qs0, 0.0 );
+    const bool r_forced_inactive = FloatUtils::lt( u_r_qs0, 0.0 );
+
+    const bool s_forced_active   = FloatUtils::gt( l_s_qr0, 0.0 );
+    const bool s_forced_inactive = FloatUtils::lt( u_s_qr0, 0.0 );
+
+    unsigned varQ = weightedSumLayer->neuronToVariable( q );
+    unsigned varR = weightedSumLayer->neuronToVariable( r );
+    unsigned varS = weightedSumLayer->neuronToVariable( s );
+
+    unsigned originalVarQ = _baseIpqPreprocessor.getOldIndex( varQ );
+    unsigned originalVarR = _baseIpqPreprocessor.getOldIndex( varR );
+    unsigned originalVarS = _baseIpqPreprocessor.getOldIndex( varS );
+
+    // === Create forbidden combination (size-3 dependency) ===
+    //
+    // Same mapping as the pair case:
+    //  - forced_inactive  -> forbid Active
+    //  - forced_active    -> forbid Inactive
+    //
+    // So if we know for each neuron it is forced one way, we can forbid the opposite assignment.
+    //
+    if ( q_forced_inactive && r_forced_inactive && s_forced_inactive )
+    {
+        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
+                                            ReLUState::Active, ReLUState::Active, ReLUState::Active );
+    }
+    else if ( q_forced_active && r_forced_active && s_forced_active )
+    {
+        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
+                                            ReLUState::Inactive, ReLUState::Inactive, ReLUState::Inactive );
+    }
+    else if ( q_forced_inactive && r_forced_inactive && s_forced_active )
+    {
+        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
+                                            ReLUState::Active, ReLUState::Active, ReLUState::Inactive );
+    }
+    else if ( q_forced_inactive && r_forced_active && s_forced_inactive )
+    {
+        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
+                                            ReLUState::Active, ReLUState::Inactive, ReLUState::Active );
+    }
+    else if ( q_forced_active && r_forced_inactive && s_forced_inactive )
+    {
+        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
+                                            ReLUState::Inactive, ReLUState::Active, ReLUState::Active );
+    }
+    else if ( q_forced_inactive && r_forced_active && s_forced_active )
+    {
+        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
+                                            ReLUState::Active, ReLUState::Inactive, ReLUState::Inactive );
+    }
+    else if ( q_forced_active && r_forced_inactive && s_forced_active )
+    {
+        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
+                                            ReLUState::Inactive, ReLUState::Active, ReLUState::Inactive );
+    }
+    else if ( q_forced_active && r_forced_active && s_forced_inactive )
+    {
+        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
+                                            ReLUState::Inactive, ReLUState::Inactive, ReLUState::Active );
+    }
+    else
+    {
+        return false; // no size-3 dependency found
+    }
+
+    printf( "[DA][triple %u,%u,%u] is a triple dependency\n",
+            originalVarQ, originalVarR, originalVarS );
+
+    return true;
+}
+#ifdef ENABLE_GUROBI
+
+bool DependencyAnalyzer::lpSliceTwoEqOneDirection(
+    const Vector<double> &w_t,  double b_t,
+    const Vector<double> &w_o1, double b_o1,
+    const Vector<double> &w_o2, double b_o2,
+    const Vector<double> &L,    const Vector<double> &U,
+    bool maximize,
+    double &outVal ) const
+{
+    ASSERT( w_t.size() == w_o1.size() );
+    ASSERT( w_t.size() == w_o2.size() );
+    ASSERT( w_t.size() == L.size() && L.size() == U.size() );
+
+    const unsigned dim = w_t.size();
+
+    GurobiWrapper lp;
+    lp.setNumberOfThreads( 1 );
+    lp.setVerbosity( 0 );
+    lp.setTimeLimit( 0.05 ); // tune as needed
+
+    Vector<String> varNames( dim );
+    for ( unsigned j = 0; j < dim; ++j )
+    {
+        String name = Stringf( "z_%u", j );
+        varNames[j] = name;
+        lp.addVariable( name, L[j], U[j], GurobiWrapper::CONTINUOUS );
+    }
+
+    // Equality #1: w_o1 · z = -b_o1
+    List<GurobiWrapper::Term> eq1;
+    for ( unsigned j = 0; j < dim; ++j )
+        if ( !FloatUtils::isZero( w_o1[j] ) )
+            eq1.append( GurobiWrapper::Term( w_o1[j], varNames[j] ) );
+    lp.addEqConstraint( eq1, -b_o1 );
+
+    // Equality #2: w_o2 · z = -b_o2
+    List<GurobiWrapper::Term> eq2;
+    for ( unsigned j = 0; j < dim; ++j )
+        if ( !FloatUtils::isZero( w_o2[j] ) )
+            eq2.append( GurobiWrapper::Term( w_o2[j], varNames[j] ) );
+    lp.addEqConstraint( eq2, -b_o2 );
+
+    // Objective: w_t · z + b_t
+    List<GurobiWrapper::Term> obj;
+    for ( unsigned j = 0; j < dim; ++j )
+        if ( !FloatUtils::isZero( w_t[j] ) )
+            obj.append( GurobiWrapper::Term( w_t[j], varNames[j] ) );
+
+    if ( maximize )
+        lp.setObjective( obj, b_t );
+    else
+        lp.setCost( obj, b_t );
+
+    lp.solve();
+
+    if ( lp.infeasible() || !lp.haveFeasibleSolution() )
+        return false;
+
+    outVal = lp.getOptimalCostOrObjective();
+    return true;
+}
+
+#endif
+void DependencyAnalyzer::_sliceMinMax_givenOther2Zero_LP(
+    const Vector<double> &w_t,  double b_t,
+    const Vector<double> &w_o1, double b_o1,
+    const Vector<double> &w_o2, double b_o2,
+    const Vector<double> &L,    const Vector<double> &U,
+    double &outMin, double &outMax ) const
+{
+#ifdef ENABLE_GUROBI
+    double mn, mx;
+
+    bool okMin = lpSliceTwoEqOneDirection( w_t, b_t, w_o1, b_o1, w_o2, b_o2,
+                                          L, U, /*maximize=*/false, mn );
+    bool okMax = lpSliceTwoEqOneDirection( w_t, b_t, w_o1, b_o1, w_o2, b_o2,
+                                          L, U, /*maximize=*/true,  mx );
+
+    if ( !okMin || !okMax )
+    {
+        outMin = FloatUtils::infinity();
+        outMax = -FloatUtils::infinity();
+        return;
+    }
+
+    outMin = mn;
+    outMax = mx;
+
+#else
+    ASSERT( false && "_sliceMinMax_givenOther2Zero_LP called with ENABLE_GUROBI = false" );
+    outMin = FloatUtils::infinity();
+    outMax = -FloatUtils::infinity();
+#endif
+}
+
+void DependencyAnalyzer::_sliceMinMax_givenOther2Zero( const Vector<double> &w_t,  double b_t,
+                                                       const Vector<double> &w_o1, double b_o1,
+                                                       const Vector<double> &w_o2, double b_o2,
+                                                       const Vector<double> &L, const Vector<double> &U,
+                                                       double &outMin, double &outMax ) const
+{
+    ASSERT( w_t.size() == w_o1.size() );
+    ASSERT( w_t.size() == w_o2.size() );
+    ASSERT( w_t.size() == L.size() && L.size() == U.size() );
+
+    const unsigned dim = w_t.size();
+    ASSERT( dim > 1 );
+
+    // 1) Baseline: ignore equalities
+    double baseMin = 0.0, baseMax = 0.0;
+    _boxMinMax( w_t, b_t, L, U, baseMin, baseMax );
+
+    double bestMin = baseMin; // want largest lower bound
+    double bestMax = baseMax; // want smallest upper bound
+
+    // 2) Try all pivot pairs (k,l) for eliminating x_k and x_l using 2 equalities
+    for ( unsigned k = 0; k < dim; ++k )
+    {
+        for ( unsigned l = k + 1; l < dim; ++l )
+        {
+            // Pivot matrix A = [ w_o1[k] w_o1[l] ; w_o2[k] w_o2[l] ]
+            const double a11 = w_o1[k];
+            const double a12 = w_o1[l];
+            const double a21 = w_o2[k];
+            const double a22 = w_o2[l];
+
+            const double det = a11 * a22 - a12 * a21;
+            if ( FloatUtils::isZero( det ) )
+                continue; // cannot solve for (x_k, x_l)
+
+            // If target doesn't use either pivot variable, substitution cannot help beyond baseline
+            if ( FloatUtils::isZero( w_t[k] ) && FloatUtils::isZero( w_t[l] ) )
+                continue;
+
+            // Inverse of A:
+            // invA = (1/det) [ a22 -a12 ; -a21 a11 ]
+            const double inv11 =  a22 / det;
+            const double inv12 = -a12 / det;
+            const double inv21 = -a21 / det;
+            const double inv22 =  a11 / det;
+
+            //
+            // We solve:
+            //   A * [x_k; x_l] + sum_{j != k,l} [w_o1[j]; w_o2[j]] x_j + [b_o1; b_o2] = 0
+            // => [x_k; x_l] = - invA * ( [b_o1; b_o2] + sum_{j != k,l} [w_o1[j]; w_o2[j]] x_j )
+            //
+
+            // Constant part for pivots:
+            const double xk_const = -( inv11 * b_o1 + inv12 * b_o2 );
+            const double xl_const = -( inv21 * b_o1 + inv22 * b_o2 );
+
+            // Target after substitution:
+            // y = w_t·x + b_t = b' + sum_{j != k,l} coeff_j x_j
+            double bPrime = b_t + w_t[k] * xk_const + w_t[l] * xl_const;
+
+            double mn = bPrime;
+            double mx = bPrime;
+
+            for ( unsigned j = 0; j < dim; ++j )
+            {
+                if ( j == k || j == l )
+                    continue;
+
+                // Contribution of x_j to pivots:
+                // [x_k; x_l] has term: -invA * [w_o1[j]; w_o2[j]] * x_j
+                const double xk_coeff_j = -( inv11 * w_o1[j] + inv12 * w_o2[j] );
+                const double xl_coeff_j = -( inv21 * w_o1[j] + inv22 * w_o2[j] );
+
+                // So coefficient of x_j in target:
+                const double coeff = w_t[j] + w_t[k] * xk_coeff_j + w_t[l] * xl_coeff_j;
+
+                if ( coeff >= 0.0 )
+                {
+                    mn += coeff * L[j];
+                    mx += coeff * U[j];
+                }
+                else
+                {
+                    mn += coeff * U[j];
+                    mx += coeff * L[j];
+                }
+            }
+
+            // Update best bounds separately
+            if ( FloatUtils::gt( mn, bestMin ) )
+                bestMin = mn;
+
+            if ( FloatUtils::lt( mx, bestMax ) )
+                bestMax = mx;
+        }
+    }
+
+    outMin = bestMin;
+    outMax = bestMax;
+}
+
 
 bool DependencyAnalyzer::_isSupersetOfKnownDependency(const std::vector<unsigned> &variables) const
 {
