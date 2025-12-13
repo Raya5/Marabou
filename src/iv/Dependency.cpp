@@ -40,6 +40,14 @@ Dependency Dependency::Triple( unsigned varA, unsigned varB, unsigned varC,
     return Dependency( vars, states );
 }
 
+Dependency Dependency::Quad( unsigned varA, unsigned varB, unsigned varC, unsigned varD,
+                               ReLUState stateA, ReLUState stateB, ReLUState stateC, ReLUState stateD )
+{
+    std::vector<unsigned> vars   = { varA, varB, varC, varD };
+    std::vector<ReLUState> states = { stateA, stateB, stateC, stateD };
+    return Dependency( vars, states );
+}
+
 size_t Dependency::size() const
 {
     return _vars.size();
@@ -63,6 +71,11 @@ bool Dependency::isPair() const
 bool Dependency::isTriple() const
 {
     return _vars.size() == 3;
+}
+
+bool Dependency::isQuad() const
+{
+    return _vars.size() == 4;
 }
 
 bool Dependency::contains( unsigned var ) const

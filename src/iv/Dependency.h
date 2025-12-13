@@ -38,7 +38,8 @@ public:
                             ReLUState stateA, ReLUState stateB );
     static Dependency Triple( unsigned varA, unsigned varB, unsigned varC,
                               ReLUState stateA, ReLUState stateB, ReLUState stateC );
-
+    static Dependency Quad( unsigned varA, unsigned varB, unsigned varC, unsigned varD,
+                              ReLUState stateA, ReLUState stateB, ReLUState stateC, ReLUState stateD );
     // Accessors
     size_t size() const;
     const std::vector<unsigned> &getVars() const;
@@ -46,6 +47,7 @@ public:
 
     bool isPair() const;
     bool isTriple() const;
+    bool isQuad() const;
     bool contains( unsigned var ) const;
 
     // Equality and hashing

@@ -127,6 +127,12 @@ public:
     /*
       TODO
     */
+    bool detectAndRecordQuadConflict( unsigned layerIndex,
+                                      unsigned q, unsigned r, unsigned s, unsigned t );
+
+    /*
+      TODO
+    */
     bool _isSupersetOfKnownDependency(const std::vector<unsigned> &variables) const;
 
     // --- Bitmask-based minimal dependency tracking ---
@@ -213,6 +219,24 @@ public:
     /*
       TODO
     */
+    bool analyzeQuadConflict( unsigned layerIndex,
+                                              unsigned q, unsigned r, unsigned s, unsigned t,
+                                              Dependency &outDependency );
+
+    /*
+      TODO
+    */
+    bool lpSliceThreeEqOneDirection(
+        const Vector<double> &w_t,  double b_t,
+        const Vector<double> &w_o1, double b_o1,
+        const Vector<double> &w_o2, double b_o2,
+        const Vector<double> &w_o3, double b_o3,
+        const Vector<double> &L,    const Vector<double> &U,
+        bool maximize,
+        double &outVal ) const;
+    /*
+      TODO
+    */
     bool lpSliceTwoEqOneDirection(
         const Vector<double> &w_t,  double b_t,
         const Vector<double> &w_o1, double b_o1,
@@ -220,6 +244,16 @@ public:
         const Vector<double> &L,    const Vector<double> &U,
         bool maximize,
         double &outVal ) const;
+    /*
+      TODO
+    */
+    void _sliceMinMax_givenOther3Zero_LP(
+        const Vector<double> &w_t,  double b_t,
+        const Vector<double> &w_o1, double b_o1,
+        const Vector<double> &w_o2, double b_o2,
+        const Vector<double> &w_o3, double b_o3,
+        const Vector<double> &L,    const Vector<double> &U,
+        double &outMin, double &outMax ) const;
     /*
       TODO
     */
