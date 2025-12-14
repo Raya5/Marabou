@@ -330,7 +330,7 @@ unsigned DependencyAnalyzer::computeSameLayerDependencies( unsigned weightedSumL
         {
             unsigned r = unstable[j];
             ASSERT( q < r );
-            if ( detectAndRecordPairConflict( weightedSumLayerIndex, q, r ) )
+            if ( detectAndRecordConflict( weightedSumLayerIndex, { q, r } ) )
                 ++addedPairs;
         }
     }
@@ -348,7 +348,7 @@ unsigned DependencyAnalyzer::computeSameLayerDependencies( unsigned weightedSumL
                 {
                     unsigned s = unstable[k];
                     ASSERT( q < r && r < s );
-                    if ( detectAndRecordTripleConflict( weightedSumLayerIndex, q, r, s ) )
+                    if ( detectAndRecordConflict( weightedSumLayerIndex, { q, r, s } ) )
                         ++addedTriples;
                 }
             }
@@ -371,7 +371,7 @@ unsigned DependencyAnalyzer::computeSameLayerDependencies( unsigned weightedSumL
                     {
                         unsigned t = unstable[m];
                         ASSERT( q < r && r < s && s < t );
-                        if ( detectAndRecordQuadConflict( weightedSumLayerIndex, q, r, s, t ) )
+                        if ( detectAndRecordConflict( weightedSumLayerIndex,  { q, r, s, t } ) )
                             ++addedQuads;
                     }
                 }
@@ -403,478 +403,24 @@ unsigned DependencyAnalyzer::computeSameLayerDependencies( unsigned weightedSumL
     return addedPairs + addedTriples + addedQuads;
 }
 
-bool DependencyAnalyzer::detectAndRecordTripleConflict( unsigned layerIndex,
-                                                        unsigned q, unsigned r, unsigned s )
-{
-    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
-    ASSERT( weightedSumLayer );
-
-    unsigned varQ = weightedSumLayer->neuronToVariable( q );
-    unsigned varR = weightedSumLayer->neuronToVariable( r );
-    unsigned varS = weightedSumLayer->neuronToVariable( s );
-
-    unsigned originalVarQ = _baseIpqPreprocessor.getOldIndex( varQ );
-    unsigned originalVarR = _baseIpqPreprocessor.getOldIndex( varR );
-    unsigned originalVarS = _baseIpqPreprocessor.getOldIndex( varS );
-
-    std::vector<unsigned> vars = { originalVarQ, originalVarR, originalVarS };
-
-    // === Dependency subset pruning mode ===
-    // 0 = Compare (bitmask + watcher), assert tie, print timing
-    // 1 = Bitmask only
-    // 2 = Watcher-based only
-    int dependencySubsetMode = 1;
-
-    bool issuperset = false;
-
-    if (dependencySubsetMode == 0)
-    {
-        auto t0 = std::chrono::high_resolution_clock::now();
-        Bitmask depMask = _buildDependencySubBitmask(vars);
-        bool bitmaskResult = _isNonMinimalDependency(depMask);
-        auto t1 = std::chrono::high_resolution_clock::now();
-        bool originalResult = _isSupersetOfKnownDependency(vars);
-        auto t2 = std::chrono::high_resolution_clock::now();
-
-        double timeBitmask  = std::chrono::duration<double, std::micro>(t1 - t0).count();  // µs
-        double timeOriginal = std::chrono::duration<double, std::micro>(t2 - t1).count();
-
-        printf("[DA][timing] Bitmask:  %.3f µs\n", timeBitmask);
-        printf("[DA][timing] Original: %.3f µs\n", timeOriginal);
-        printf("[DA][timing] Faster:   %s\n", (timeBitmask < timeOriginal ? "Bitmask" : "Original"));
-
-        ASSERT(bitmaskResult == originalResult);
-        issuperset = bitmaskResult;
-    }
-    else if (dependencySubsetMode == 1)
-    {
-        Bitmask depMask = _buildDependencySubBitmask(vars);
-        issuperset = _isNonMinimalDependency(depMask);
-    }
-    else if (dependencySubsetMode == 2)
-    {
-        issuperset = _isSupersetOfKnownDependency(vars);
-    }
-    else
-    {
-        ASSERT(false && "Invalid dependencySubsetMode");
-    }
-
-    if (issuperset)
-        return false;
-
-    Dependency d;
-    if ( !analyzeTripleConflict( layerIndex, q, r, s, d ) )
-        return false;
-
-    return recordConflict( std::move( d ) );
-}
-
-bool DependencyAnalyzer::detectAndRecordQuadConflict( unsigned layerIndex,
-                                                      unsigned q, unsigned r, unsigned s, unsigned t )
-{
-    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
-    ASSERT( weightedSumLayer );
-
-    unsigned varQ = weightedSumLayer->neuronToVariable( q );
-    unsigned varR = weightedSumLayer->neuronToVariable( r );
-    unsigned varS = weightedSumLayer->neuronToVariable( s );
-    unsigned varT = weightedSumLayer->neuronToVariable( t );
-
-    unsigned originalVarQ = _baseIpqPreprocessor.getOldIndex( varQ );
-    unsigned originalVarR = _baseIpqPreprocessor.getOldIndex( varR );
-    unsigned originalVarS = _baseIpqPreprocessor.getOldIndex( varS );
-    unsigned originalVarT = _baseIpqPreprocessor.getOldIndex( varT );
-
-    std::vector<unsigned> vars = { originalVarQ, originalVarR, originalVarS, originalVarT };
-
-    // === Dependency subset pruning mode ===
-    // 0 = Compare (bitmask + watcher), assert tie, print timing
-    // 1 = Bitmask only
-    // 2 = Watcher-based only
-    int dependencySubsetMode = 1;
-
-    bool issuperset = false;
-
-    if ( dependencySubsetMode == 0 )
-    {
-        auto t0 = std::chrono::high_resolution_clock::now();
-        Bitmask depMask = _buildDependencySubBitmask( vars );
-        bool bitmaskResult = _isNonMinimalDependency( depMask );
-        auto t1 = std::chrono::high_resolution_clock::now();
-        bool originalResult = _isSupersetOfKnownDependency( vars );
-        auto t2 = std::chrono::high_resolution_clock::now();
-
-        double timeBitmask  = std::chrono::duration<double, std::micro>( t1 - t0 ).count();  // µs
-        double timeOriginal = std::chrono::duration<double, std::micro>( t2 - t1 ).count();
-
-        printf( "[DA][timing] Bitmask:  %.3f µs\n", timeBitmask );
-        printf( "[DA][timing] Original: %.3f µs\n", timeOriginal );
-        printf( "[DA][timing] Faster:   %s\n", ( timeBitmask < timeOriginal ? "Bitmask" : "Original" ) );
-
-        ASSERT( bitmaskResult == originalResult );
-        issuperset = bitmaskResult;
-    }
-    else if ( dependencySubsetMode == 1 )
-    {
-        Bitmask depMask = _buildDependencySubBitmask( vars );
-        issuperset = _isNonMinimalDependency( depMask );
-    }
-    else if ( dependencySubsetMode == 2 )
-    {
-        issuperset = _isSupersetOfKnownDependency( vars );
-    }
-    else
-    {
-        ASSERT( false && "Invalid dependencySubsetMode" );
-    }
-
-    if ( issuperset )
-        return false;
-
-    Dependency d;
-    if ( !analyzeQuadConflict( layerIndex, q, r, s, t, d ) )
-        return false;
-
-    return recordConflict( std::move( d ) );
-}
-
-
-
-bool DependencyAnalyzer::detectAndRecordPairConflict(unsigned layerIndex,
-                                 unsigned q, unsigned r)
-{
-    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
-    
-    unsigned varQ = weightedSumLayer->neuronToVariable( q );
-    unsigned varR = weightedSumLayer->neuronToVariable( r );
-
-    unsigned originalVarQ = _baseIpqPreprocessor.getOldIndex( varQ );
-    unsigned originalVarR = _baseIpqPreprocessor.getOldIndex( varR );
-
-    std::vector<unsigned> vars = { originalVarQ, originalVarR };
-
-
-    // === Dependency subset pruning mode ===
-    // 0 = Compare (bitmask + watcher), assert tie, print timing
-    // 1 = Bitmask only
-    // 2 = Watcher-based only
-    int dependencySubsetMode = 1;
-
-    bool issuperset = false;
-
-    if (dependencySubsetMode == 0)
-    {
-        auto t0 = std::chrono::high_resolution_clock::now();
-        Bitmask depMask = _buildDependencySubBitmask(vars);
-        bool bitmaskResult = _isNonMinimalDependency(depMask);
-        auto t1 = std::chrono::high_resolution_clock::now();
-        bool originalResult = _isSupersetOfKnownDependency(vars);
-        auto t2 = std::chrono::high_resolution_clock::now();
-
-        double timeBitmask  = std::chrono::duration<double, std::micro>(t1 - t0).count();  // µs
-        double timeOriginal = std::chrono::duration<double, std::micro>(t2 - t1).count();
-
-        printf("[DA][timing] Bitmask:  %.3f µs\n", timeBitmask);
-        printf("[DA][timing] Original: %.3f µs\n", timeOriginal);
-        printf("[DA][timing] Faster:   %s\n", (timeBitmask < timeOriginal ? "Bitmask" : "Original"));
-
-        ASSERT(bitmaskResult == originalResult);
-        issuperset = bitmaskResult;
-    }
-    else if (dependencySubsetMode == 1)
-    {
-        Bitmask depMask = _buildDependencySubBitmask(vars);
-        issuperset = _isNonMinimalDependency(depMask);
-    }
-    else if (dependencySubsetMode == 2)
-    {
-        issuperset = _isSupersetOfKnownDependency(vars);
-    }
-    else
-    {
-        ASSERT(false && "Invalid dependencySubsetMode");
-    }
-
-    if (issuperset)
-        return false;
-
-    Dependency d;
-    if (!analyzePairConflict(layerIndex, q, r, d))
-        return false;
-
-    return recordConflict(std::move(d));
-}
-
-bool DependencyAnalyzer::analyzePairConflict( unsigned layerIndex,
-                                              unsigned q, unsigned r,
-                                              Dependency &outDependency )
+bool DependencyAnalyzer::analyzeConflict( unsigned layerIndex,
+                                         const std::vector<unsigned> &neurons,
+                                         Dependency &outDependency )
 {
     const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
     ASSERT( weightedSumLayer );
     ASSERT( weightedSumLayer->getLayerType() == NLR::Layer::WEIGHTED_SUM );
 
+    const unsigned k = neurons.size();
+    ASSERT( k == 2 || k == 3 || k == 4 );
+
+    // Validate ordering and bounds
     const unsigned layerSize = weightedSumLayer->getSize();
-    ASSERT( q < layerSize && r < layerSize );
-    ASSERT( q < r );
-    (void) layerSize;
-
-    const auto &sources = weightedSumLayer->getSourceLayers();
-    ASSERT( sources.size() == 1 );
-    const unsigned prevLayerIndex = sources.begin()->first;
-    const NLR::Layer *prevLayer = _networkLevelReasoner->getLayer( prevLayerIndex );
-    ASSERT( prevLayer );
-    const unsigned prevSize = prevLayer->getSize();
-
-    // === Collect weight rows and biases ===
-    Vector<double> w_q( prevSize ), w_r( prevSize );
-    for ( unsigned j = 0; j < prevSize; ++j )
+    for ( unsigned i = 0; i < k; ++i )
     {
-        w_q[j] = weightedSumLayer->getWeight( prevLayerIndex, j, q );
-        w_r[j] = weightedSumLayer->getWeight( prevLayerIndex, j, r );
+        ASSERT( neurons[i] < layerSize );
+        if ( i > 0 ) ASSERT( neurons[i-1] < neurons[i] );
     }
-
-    const double b_q = weightedSumLayer->getBias( q );
-    const double b_r = weightedSumLayer->getBias( r );
-
-    Vector<double> lowerPrev, upperPrev;
-    _getLayerBounds( prevLayer, lowerPrev, upperPrev );
-
-    // === Compute conditional bounds ===    // Choose mode locally:
-    // 0 = Compare (analytic + LP, assert tie, print speed ratio)
-    // 1 = Analytic only
-    // 2 = LP only
-    int pairSliceMode = 1;
-
-    // Final bounds used in classification
-    double l_q_r0 = 0.0;
-    double u_q_r0 = 0.0;
-    double l_r_q0 = 0.0;
-    double u_r_q0 = 0.0;
-
-    // Timing helpers (only actually used in compare mode)
-    auto now = []() {
-        return std::chrono::high_resolution_clock::now();
-    };
-
-    auto toMillis = []( auto start, auto end ) {
-        return std::chrono::duration_cast<std::chrono::microseconds>( end - start ).count() / 1000.0;
-    };
-
-    if ( pairSliceMode == 1 )
-    {
-        // --- ANALYTIC ONLY ---
-        _sliceMinMax_givenOtherZero( w_q, b_q, w_r, b_r,
-                                     lowerPrev, upperPrev,
-                                     l_q_r0, u_q_r0 );
-        _sliceMinMax_givenOtherZero( w_r, b_r, w_q, b_q,
-                                     lowerPrev, upperPrev,
-                                     l_r_q0, u_r_q0 );
-    }
-    else if ( pairSliceMode == 2 )
-    {
-        // --- LP ONLY ---
-#ifdef ENABLE_GUROBI
-        _sliceMinMax_givenOtherZero_LP( w_q, b_q, w_r, b_r,
-                                        lowerPrev, upperPrev,
-                                        l_q_r0, u_q_r0 );
-        _sliceMinMax_givenOtherZero_LP( w_r, b_r, w_q, b_q,
-                                        lowerPrev, upperPrev,
-                                        l_r_q0, u_r_q0 );
-#else
-        ASSERT( false && "pairSliceMode=2 (LP only) but ENABLE_GUROBI is false" );
-#endif
-    }
-    else // pairSliceMode == 0  (compare)
-    {
-        // === Compute conditional bounds with analytic helper ===
-        double l_q_r0_an, u_q_r0_an, l_r_q0_an, u_r_q0_an;
-        double l_q_r0_lp, u_q_r0_lp, l_r_q0_lp, u_r_q0_lp;
-
-        // --- analytic version timing ---
-        auto t0 = now();
-        _sliceMinMax_givenOtherZero( w_q, b_q, w_r, b_r,
-                                     lowerPrev, upperPrev,
-                                     l_q_r0_an, u_q_r0_an );
-        _sliceMinMax_givenOtherZero( w_r, b_r, w_q, b_q,
-                                     lowerPrev, upperPrev,
-                                     l_r_q0_an, u_r_q0_an );
-        auto t1 = now();
-        double analyticMs = toMillis( t0, t1 );
-
-        // --- LP version timing ---
-#ifdef ENABLE_GUROBI
-        auto t2 = now();
-        _sliceMinMax_givenOtherZero_LP( w_q, b_q, w_r, b_r,
-                                        lowerPrev, upperPrev,
-                                        l_q_r0_lp, u_q_r0_lp );
-        _sliceMinMax_givenOtherZero_LP( w_r, b_r, w_q, b_q,
-                                        lowerPrev, upperPrev,
-                                        l_r_q0_lp, u_r_q0_lp );
-        auto t3 = now();
-        double lpMs = toMillis( t2, t3 );
-#else
-        ASSERT( false && "pairSliceMode=0 (compare) but ENABLE_GUROBI is false" );
-        double lpMs = 0.0;
-        l_q_r0_lp = u_q_r0_lp = l_r_q0_lp = u_r_q0_lp = 0.0;
-#endif
-
-        auto betterLB = []( double an, double lp ) {
-            if ( !FloatUtils::isFinite( lp ) ) return "ANALYTIC (LP invalid)";
-            if ( FloatUtils::isPositive( lp - an ) ) return "LP";        // lp > an
-            if ( FloatUtils::isPositive( an - lp ) ) return "ANALYTIC";  // an > lp
-            return "TIE";
-        };
-
-        auto betterUB = []( double an, double lp ) {
-            if ( !FloatUtils::isFinite( lp ) ) return "ANALYTIC (LP invalid)";
-            if ( FloatUtils::isPositive( an - lp ) ) return "LP";        // lp < an
-            if ( FloatUtils::isPositive( lp - an ) ) return "ANALYTIC";  // an < lp
-            return "TIE";
-        };
-
-        auto crossesZero = []( double a, double b ) {
-            return ( FloatUtils::lt( a, 0.0 ) && FloatUtils::gt( b, 0.0 ) ) ||
-                   ( FloatUtils::gt( a, 0.0 ) && FloatUtils::lt( b, 0.0 ) );
-        };
-
-        const char *fasterTime =
-            FloatUtils::lt( analyticMs, lpMs ) ? "ANALYTIC" :
-            FloatUtils::lt( lpMs, analyticMs ) ? "LP" :
-                                                 "TIE";
-
-        // ratio = LP time / analytic time
-        double ratio = ( analyticMs > 0.0 ) ? ( lpMs / analyticMs ) : -1.0;
-
-        printf(
-            "[DA][pair %u,%u] analytic vs LP:"
-            " q|r=0: LB an=%.6f lp=%.6f (%s), UB an=%.6f lp=%.6f (%s);"
-            " r|q=0: LB an=%.6f lp=%.6f (%s), UB an=%.6f lp=%.6f (%s);"
-            " times: analytic=%.3fms, LP=%.3fms, ratio=%.3f, faster=%s\n",
-            q, r,
-            l_q_r0_an, l_q_r0_lp, betterLB( l_q_r0_an, l_q_r0_lp ),
-            u_q_r0_an, u_q_r0_lp, betterUB( u_q_r0_an, u_q_r0_lp ),
-            l_r_q0_an, l_r_q0_lp, betterLB( l_r_q0_an, l_r_q0_lp ),
-            u_r_q0_an, u_r_q0_lp, betterUB( u_r_q0_an, u_r_q0_lp ),
-            analyticMs, lpMs, ratio, fasterTime );
-
-        if ( crossesZero( l_q_r0_an, l_q_r0_lp ) )
-        {
-            printf( "[DA][pair %u,%u] SIGN-DIFF q|r=0 LB: analytic=%.9f, LP=%.9f\n",
-                    q, r, l_q_r0_an, l_q_r0_lp );
-        }
-
-        if ( crossesZero( u_q_r0_an, u_q_r0_lp ) )
-        {
-            printf( "[DA][pair %u,%u] SIGN-DIFF q|r=0 UB: analytic=%.9f, LP=%.9f\n",
-                    q, r, u_q_r0_an, u_q_r0_lp );
-        }
-
-        if ( crossesZero( l_r_q0_an, l_r_q0_lp ) )
-        {
-            printf( "[DA][pair %u,%u] SIGN-DIFF r|q=0 LB: analytic=%.9f, LP=%.9f\n",
-                    q, r, l_r_q0_an, l_r_q0_lp );
-        }
-
-        if ( crossesZero( u_r_q0_an, u_r_q0_lp ) )
-        {
-            printf( "[DA][pair %u,%u] SIGN-DIFF r|q=0 UB: analytic=%.9f, LP=%.9f\n",
-                    q, r, u_r_q0_an, u_r_q0_lp );
-        }
-
-        // Given your experiments: assert they are tied
-        ASSERT( FloatUtils::areEqual( l_q_r0_an, l_q_r0_lp ) );
-        ASSERT( FloatUtils::areEqual( u_q_r0_an, u_q_r0_lp ) );
-        ASSERT( FloatUtils::areEqual( l_r_q0_an, l_r_q0_lp ) );
-        ASSERT( FloatUtils::areEqual( u_r_q0_an, u_r_q0_lp ) );
-
-        // Use analytic values for the actual classification
-        l_q_r0 = l_q_r0_an;
-        u_q_r0 = u_q_r0_an;
-        l_r_q0 = l_r_q0_an;
-        u_r_q0 = u_r_q0_an;
-    }
-
-    // === Debug info ===
-    unsigned countTrue = 0;
-    if ( FloatUtils::gt( l_q_r0, 0.0 ) ) ++countTrue;
-    if ( FloatUtils::lt( u_q_r0, 0.0 ) ) ++countTrue;
-    if ( FloatUtils::gt( l_r_q0, 0.0 ) ) ++countTrue;
-    if ( FloatUtils::lt( u_r_q0, 0.0 ) ) ++countTrue;
-
-    if ( countTrue > 1 )
-    {
-        unsigned varQ_ = weightedSumLayer->neuronToVariable( q );
-        unsigned varR_ = weightedSumLayer->neuronToVariable( r );
-
-        printf("[DA][pair %u,%u] (vars %u,%u) >0(l_q_r0)=%d  <0(u_q_r0)=%d  "
-               ">0(l_r_q0)=%d  <0(u_r_q0)=%d  totalTrue=%u\n",
-               q, r, varQ_, varR_,
-               FloatUtils::gt( l_q_r0, 0.0 ),
-               FloatUtils::lt( u_q_r0, 0.0 ),
-               FloatUtils::gt( l_r_q0, 0.0 ),
-               FloatUtils::lt( u_r_q0, 0.0 ),
-               countTrue );
-    }
-    // === End of Debug info ===
-
-    // === Boolean classification ===
-    const bool q_forced_active   = FloatUtils::gt( l_q_r0, 0.0 );
-    const bool q_forced_inactive = FloatUtils::lt( u_q_r0, 0.0 );
-    const bool r_forced_active   = FloatUtils::gt( l_r_q0, 0.0 );
-    const bool r_forced_inactive = FloatUtils::lt( u_r_q0, 0.0 );
-
-    unsigned varQ = weightedSumLayer->neuronToVariable( q );
-    unsigned varR = weightedSumLayer->neuronToVariable( r );
-
-    unsigned originalVarQ = _baseIpqPreprocessor.getOldIndex( varQ );
-    unsigned originalVarR = _baseIpqPreprocessor.getOldIndex( varR );
-
-
-    // === Create forbidden combination (dependency) ===
-    if ( q_forced_inactive && r_forced_inactive )
-    {
-        // u_q|r0 < 0 and u_r|q0 < 0 ⇒ forbid (q=Active, r=Active)
-        outDependency = Dependency::Pair( originalVarQ, originalVarR,
-                                          ReLUState::Active, ReLUState::Active );
-    }
-    else if ( q_forced_active && r_forced_active )
-    {
-        // l_q|r0 > 0 and l_r|q0 > 0 ⇒ forbid (q=Inactive, r=Inactive)
-        outDependency = Dependency::Pair( originalVarQ, originalVarR,
-                                          ReLUState::Inactive, ReLUState::Inactive );
-    }
-    else if ( q_forced_inactive && r_forced_active )
-    {
-        // u_q|r0 < 0 and l_r|q0 > 0 ⇒ forbid (q=Active, r=Inactive)
-        outDependency = Dependency::Pair( originalVarQ, originalVarR,
-                                          ReLUState::Active, ReLUState::Inactive );
-    }
-    else if ( q_forced_active && r_forced_inactive )
-    {
-        // l_q|r0 > 0 and u_r|q0 < 0 ⇒ forbid (q=Inactive, r=Active)
-        outDependency = Dependency::Pair( originalVarQ, originalVarR,
-                                          ReLUState::Inactive, ReLUState::Active );
-    }
-    else
-    {
-        return false; // no dependency found
-    }
-
-    return true; // dependency found and written to outDependency
-}
-
-bool DependencyAnalyzer::analyzeTripleConflict( unsigned layerIndex,
-                                                unsigned q, unsigned r, unsigned s,
-                                                Dependency &outDependency )
-{
-    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
-    ASSERT( weightedSumLayer );
-    ASSERT( weightedSumLayer->getLayerType() == NLR::Layer::WEIGHTED_SUM );
-
-    const unsigned layerSize = weightedSumLayer->getSize();
-    ASSERT( q < layerSize && r < layerSize && s < layerSize );
-    ASSERT( q < r && r < s );
     (void)layerSize;
 
     const auto &sources = weightedSumLayer->getSourceLayers();
@@ -884,525 +430,108 @@ bool DependencyAnalyzer::analyzeTripleConflict( unsigned layerIndex,
     ASSERT( prevLayer );
     const unsigned prevSize = prevLayer->getSize();
 
-    // === Collect weight rows and biases ===
-    Vector<double> w_q( prevSize ), w_r( prevSize ), w_s( prevSize );
-    for ( unsigned j = 0; j < prevSize; ++j )
-    {
-        w_q[j] = weightedSumLayer->getWeight( prevLayerIndex, j, q );
-        w_r[j] = weightedSumLayer->getWeight( prevLayerIndex, j, r );
-        w_s[j] = weightedSumLayer->getWeight( prevLayerIndex, j, s );
-    }
-
-    const double b_q = weightedSumLayer->getBias( q );
-    const double b_r = weightedSumLayer->getBias( r );
-    const double b_s = weightedSumLayer->getBias( s );
-
+    // Gather prev-layer bounds
     Vector<double> lowerPrev, upperPrev;
     _getLayerBounds( prevLayer, lowerPrev, upperPrev );
 
-    // === Compute conditional bounds (triple) ===
-    // 0 = Compare (analytic + LP, assert tie, print speed ratio)
-    // 1 = Analytic only
-    // 2 = LP only
-    int tripleSliceMode = 2;
+    // Collect weights/biases for each neuron in this conflict
+    std::vector<Vector<double>> W;
+    std::vector<double> B;
+    W.reserve( k );
+    B.reserve( k );
 
-    // Final bounds used in classification:
-    // q | (r=0,s=0)
-    double l_q_rs0 = 0.0, u_q_rs0 = 0.0;
-    // r | (q=0,s=0)
-    double l_r_qs0 = 0.0, u_r_qs0 = 0.0;
-    // s | (q=0,r=0)
-    double l_s_qr0 = 0.0, u_s_qr0 = 0.0;
-
-    auto now = []() { return std::chrono::high_resolution_clock::now(); };
-    auto toMillis = []( auto start, auto end ) {
-        return std::chrono::duration_cast<std::chrono::microseconds>( end - start ).count() / 1000.0;
-    };
-
-    if ( tripleSliceMode == 1 )
+    for ( unsigned idx = 0; idx < k; ++idx )
     {
-        // --- ANALYTIC ONLY ---
-        _sliceMinMax_givenOther2Zero( w_q, b_q, w_r, b_r, w_s, b_s,
-                                      lowerPrev, upperPrev, l_q_rs0, u_q_rs0 );
+        unsigned n = neurons[idx];
+        Vector<double> w( prevSize );
+        for ( unsigned j = 0; j < prevSize; ++j )
+            w[j] = weightedSumLayer->getWeight( prevLayerIndex, j, n );
 
-        _sliceMinMax_givenOther2Zero( w_r, b_r, w_q, b_q, w_s, b_s,
-                                      lowerPrev, upperPrev, l_r_qs0, u_r_qs0 );
-
-        _sliceMinMax_givenOther2Zero( w_s, b_s, w_q, b_q, w_r, b_r,
-                                      lowerPrev, upperPrev, l_s_qr0, u_s_qr0 );
-    }
-    else if ( tripleSliceMode == 2 )
-    {
-        // --- LP ONLY ---
-#ifdef ENABLE_GUROBI
-        _sliceMinMax_givenOther2Zero_LP( w_q, b_q, w_r, b_r, w_s, b_s,
-                                         lowerPrev, upperPrev, l_q_rs0, u_q_rs0 );
-
-        _sliceMinMax_givenOther2Zero_LP( w_r, b_r, w_q, b_q, w_s, b_s,
-                                         lowerPrev, upperPrev, l_r_qs0, u_r_qs0 );
-
-        _sliceMinMax_givenOther2Zero_LP( w_s, b_s, w_q, b_q, w_r, b_r,
-                                         lowerPrev, upperPrev, l_s_qr0, u_s_qr0 );
-#else
-        ASSERT( false && "tripleSliceMode=2 (LP only) but ENABLE_GUROBI is false" );
-#endif
-    }
-    else
-    {
-        // --- COMPARE ---
-        double l_q_rs0_an, u_q_rs0_an, l_r_qs0_an, u_r_qs0_an, l_s_qr0_an, u_s_qr0_an;
-        double l_q_rs0_lp, u_q_rs0_lp, l_r_qs0_lp, u_r_qs0_lp, l_s_qr0_lp, u_s_qr0_lp;
-
-        auto t0 = now();
-        _sliceMinMax_givenOther2Zero( w_q, b_q, w_r, b_r, w_s, b_s,
-                                      lowerPrev, upperPrev, l_q_rs0_an, u_q_rs0_an );
-        _sliceMinMax_givenOther2Zero( w_r, b_r, w_q, b_q, w_s, b_s,
-                                      lowerPrev, upperPrev, l_r_qs0_an, u_r_qs0_an );
-        _sliceMinMax_givenOther2Zero( w_s, b_s, w_q, b_q, w_r, b_r,
-                                      lowerPrev, upperPrev, l_s_qr0_an, u_s_qr0_an );
-        auto t1 = now();
-        double analyticMs = toMillis( t0, t1 );
-
-#ifdef ENABLE_GUROBI
-        auto t2 = now();
-        _sliceMinMax_givenOther2Zero_LP( w_q, b_q, w_r, b_r, w_s, b_s,
-                                         lowerPrev, upperPrev, l_q_rs0_lp, u_q_rs0_lp );
-        _sliceMinMax_givenOther2Zero_LP( w_r, b_r, w_q, b_q, w_s, b_s,
-                                         lowerPrev, upperPrev, l_r_qs0_lp, u_r_qs0_lp );
-        _sliceMinMax_givenOther2Zero_LP( w_s, b_s, w_q, b_q, w_r, b_r,
-                                         lowerPrev, upperPrev, l_s_qr0_lp, u_s_qr0_lp );
-        auto t3 = now();
-        double lpMs = toMillis( t2, t3 );
-#else
-        ASSERT( false && "tripleSliceMode=0 (compare) but ENABLE_GUROBI is false" );
-        double lpMs = 0.0;
-        l_q_rs0_lp = u_q_rs0_lp = l_r_qs0_lp = u_r_qs0_lp = l_s_qr0_lp = u_s_qr0_lp = 0.0;
-#endif
-
-        double ratio = ( analyticMs > 0.0 ) ? ( lpMs / analyticMs ) : -1.0;
-
-        printf( "[DA][triple %u,%u,%u] times: analytic=%.3fms LP=%.3fms ratio=%.3f\n",
-                q, r, s, analyticMs, lpMs, ratio );
-
-        // For now: assert equality like you did for pairs (once you confirm it holds)
-        ASSERT( FloatUtils::areEqual( l_q_rs0_an, l_q_rs0_lp ) );
-        ASSERT( FloatUtils::areEqual( u_q_rs0_an, u_q_rs0_lp ) );
-        ASSERT( FloatUtils::areEqual( l_r_qs0_an, l_r_qs0_lp ) );
-        ASSERT( FloatUtils::areEqual( u_r_qs0_an, u_r_qs0_lp ) );
-        ASSERT( FloatUtils::areEqual( l_s_qr0_an, l_s_qr0_lp ) );
-        ASSERT( FloatUtils::areEqual( u_s_qr0_an, u_s_qr0_lp ) );
-
-        // Use analytic for actual classification
-        l_q_rs0 = l_q_rs0_an; u_q_rs0 = u_q_rs0_an;
-        l_r_qs0 = l_r_qs0_an; u_r_qs0 = u_r_qs0_an;
-        l_s_qr0 = l_s_qr0_an; u_s_qr0 = u_s_qr0_an;
+        W.push_back( w );
+        B.push_back( weightedSumLayer->getBias( n ) );
     }
 
-    // === Boolean classification (same idea as pair, but for 3) ===
-    const bool q_forced_active   = FloatUtils::gt( l_q_rs0, 0.0 );
-    const bool q_forced_inactive = FloatUtils::lt( u_q_rs0, 0.0 );
+    // For each i: compute bounds for neuron i under "others = 0"
+    std::vector<double> Lcond( k, 0.0 ), Ucond( k, 0.0 );
 
-    const bool r_forced_active   = FloatUtils::gt( l_r_qs0, 0.0 );
-    const bool r_forced_inactive = FloatUtils::lt( u_r_qs0, 0.0 );
-
-    const bool s_forced_active   = FloatUtils::gt( l_s_qr0, 0.0 );
-    const bool s_forced_inactive = FloatUtils::lt( u_s_qr0, 0.0 );
-
-    unsigned varQ = weightedSumLayer->neuronToVariable( q );
-    unsigned varR = weightedSumLayer->neuronToVariable( r );
-    unsigned varS = weightedSumLayer->neuronToVariable( s );
-
-    unsigned originalVarQ = _baseIpqPreprocessor.getOldIndex( varQ );
-    unsigned originalVarR = _baseIpqPreprocessor.getOldIndex( varR );
-    unsigned originalVarS = _baseIpqPreprocessor.getOldIndex( varS );
-
-    // === Create forbidden combination (size-3 dependency) ===
-    //
-    // Same mapping as the pair case:
-    //  - forced_inactive  -> forbid Active
-    //  - forced_active    -> forbid Inactive
-    //
-    // So if we know for each neuron it is forced one way, we can forbid the opposite assignment.
-    //
-    if ( q_forced_inactive && r_forced_inactive && s_forced_inactive )
+    for ( unsigned i = 0; i < k; ++i )
     {
-        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
-                                            ReLUState::Active, ReLUState::Active, ReLUState::Active );
-    }
-    else if ( q_forced_active && r_forced_active && s_forced_active )
-    {
-        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
-                                            ReLUState::Inactive, ReLUState::Inactive, ReLUState::Inactive );
-    }
-    else if ( q_forced_inactive && r_forced_inactive && s_forced_active )
-    {
-        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
-                                            ReLUState::Active, ReLUState::Active, ReLUState::Inactive );
-    }
-    else if ( q_forced_inactive && r_forced_active && s_forced_inactive )
-    {
-        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
-                                            ReLUState::Active, ReLUState::Inactive, ReLUState::Active );
-    }
-    else if ( q_forced_active && r_forced_inactive && s_forced_inactive )
-    {
-        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
-                                            ReLUState::Inactive, ReLUState::Active, ReLUState::Active );
-    }
-    else if ( q_forced_inactive && r_forced_active && s_forced_active )
-    {
-        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
-                                            ReLUState::Active, ReLUState::Inactive, ReLUState::Inactive );
-    }
-    else if ( q_forced_active && r_forced_inactive && s_forced_active )
-    {
-        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
-                                            ReLUState::Inactive, ReLUState::Active, ReLUState::Inactive );
-    }
-    else if ( q_forced_active && r_forced_active && s_forced_inactive )
-    {
-        outDependency = Dependency::Triple( originalVarQ, originalVarR, originalVarS,
-                                            ReLUState::Inactive, ReLUState::Inactive, ReLUState::Active );
-    }
-    else
-    {
-        return false; // no size-3 dependency found
-    }
-
-    printf( "[DA][triple %u,%u,%u] is a triple dependency\n",
-            originalVarQ, originalVarR, originalVarS );
-
-    return true;
-}
-
-bool DependencyAnalyzer::analyzeQuadConflict( unsigned layerIndex,
-                                              unsigned q, unsigned r, unsigned s, unsigned t,
-                                              Dependency &outDependency )
-{
-    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
-    ASSERT( weightedSumLayer );
-    ASSERT( weightedSumLayer->getLayerType() == NLR::Layer::WEIGHTED_SUM );
-
-    const unsigned layerSize = weightedSumLayer->getSize();
-    ASSERT( q < layerSize && r < layerSize && s < layerSize && t < layerSize );
-    ASSERT( q < r && r < s && s < t );
-    (void)layerSize;
-
-    const auto &sources = weightedSumLayer->getSourceLayers();
-    ASSERT( sources.size() == 1 );
-    const unsigned prevLayerIndex = sources.begin()->first;
-    const NLR::Layer *prevLayer = _networkLevelReasoner->getLayer( prevLayerIndex );
-    ASSERT( prevLayer );
-    const unsigned prevSize = prevLayer->getSize();
-
-    // === Collect weight rows and biases ===
-    Vector<double> w_q( prevSize ), w_r( prevSize ), w_s( prevSize ), w_t( prevSize );
-    for ( unsigned j = 0; j < prevSize; ++j )
-    {
-        w_q[j] = weightedSumLayer->getWeight( prevLayerIndex, j, q );
-        w_r[j] = weightedSumLayer->getWeight( prevLayerIndex, j, r );
-        w_s[j] = weightedSumLayer->getWeight( prevLayerIndex, j, s );
-        w_t[j] = weightedSumLayer->getWeight( prevLayerIndex, j, t );
-    }
-
-    const double b_q = weightedSumLayer->getBias( q );
-    const double b_r = weightedSumLayer->getBias( r );
-    const double b_s = weightedSumLayer->getBias( s );
-    const double b_t_bias = weightedSumLayer->getBias( t ); // avoid name clash with 't'
-
-    Vector<double> lowerPrev, upperPrev;
-    _getLayerBounds( prevLayer, lowerPrev, upperPrev );
-
-    // === Compute conditional bounds (quad) ===
-    // 0 = Compare (analytic + LP, assert tie, print speed ratio)
-    // 1 = Analytic only
-    // 2 = LP only
-
-    // Final bounds used in classification:
-    // q | (r=0,s=0,t=0)
-    double l_q_rst0 = 0.0, u_q_rst0 = 0.0;
-    // r | (q=0,s=0,t=0)
-    double l_r_qst0 = 0.0, u_r_qst0 = 0.0;
-    // s | (q=0,r=0,t=0)
-    double l_s_qrt0 = 0.0, u_s_qrt0 = 0.0;
-    // t | (q=0,r=0,s=0)
-    double l_t_qrs0 = 0.0, u_t_qrs0 = 0.0;
-
-#ifdef ENABLE_GUROBI
-    // --- LP ONLY ---
-
-    _sliceMinMax_givenOther3Zero_LP( w_q, b_q, w_r, b_r, w_s, b_s, w_t, b_t_bias,
-                                        lowerPrev, upperPrev, l_q_rst0, u_q_rst0 );
-
-    _sliceMinMax_givenOther3Zero_LP( w_r, b_r, w_q, b_q, w_s, b_s, w_t, b_t_bias,
-                                        lowerPrev, upperPrev, l_r_qst0, u_r_qst0 );
-
-    _sliceMinMax_givenOther3Zero_LP( w_s, b_s, w_q, b_q, w_r, b_r, w_t, b_t_bias,
-                                        lowerPrev, upperPrev, l_s_qrt0, u_s_qrt0 );
-
-    _sliceMinMax_givenOther3Zero_LP( w_t, b_t_bias, w_q, b_q, w_r, b_r, w_s, b_s,
-                                        lowerPrev, upperPrev, l_t_qrs0, u_t_qrs0 );
-
-    // If any slice is infeasible, ignore this quad
-    if ( !FloatUtils::isFinite( l_q_rst0 ) || !FloatUtils::isFinite( u_q_rst0 ) ||
-         !FloatUtils::isFinite( l_r_qst0 ) || !FloatUtils::isFinite( u_r_qst0 ) ||
-         !FloatUtils::isFinite( l_s_qrt0 ) || !FloatUtils::isFinite( u_s_qrt0 ) ||
-         !FloatUtils::isFinite( l_t_qrs0 ) || !FloatUtils::isFinite( u_t_qrs0 ) )
-        return false;
-
-    // === Forced-phase classification ===
-    const bool q_forced_active   = FloatUtils::gt( l_q_rst0, 0.0 );
-    const bool q_forced_inactive = FloatUtils::lt( u_q_rst0, 0.0 );
-
-    const bool r_forced_active   = FloatUtils::gt( l_r_qst0, 0.0 );
-    const bool r_forced_inactive = FloatUtils::lt( u_r_qst0, 0.0 );
-
-    const bool s_forced_active   = FloatUtils::gt( l_s_qrt0, 0.0 );
-    const bool s_forced_inactive = FloatUtils::lt( u_s_qrt0, 0.0 );
-
-    const bool t_forced_active   = FloatUtils::gt( l_t_qrs0, 0.0 );
-    const bool t_forced_inactive = FloatUtils::lt( u_t_qrs0, 0.0 );
-
-    // Require each neuron to be forced one way (otherwise we don't produce a clean forbidden 4-tuple)
-    auto isForced = []( bool forcedActive, bool forcedInactive ) {
-        return ( forcedActive && !forcedInactive ) || ( forcedInactive && !forcedActive );
-    };
-
-    if ( !isForced( q_forced_active, q_forced_inactive ) ||
-         !isForced( r_forced_active, r_forced_inactive ) ||
-         !isForced( s_forced_active, s_forced_inactive ) ||
-         !isForced( t_forced_active, t_forced_inactive ) )
-        return false;
-
-    // Map "forced" -> forbidden assignment (same as in your pair/triple code):
-    // forced_inactive => forbid Active
-    // forced_active   => forbid Inactive
-    ReLUState forbidQ = q_forced_inactive ? ReLUState::Active   : ReLUState::Inactive;
-    ReLUState forbidR = r_forced_inactive ? ReLUState::Active   : ReLUState::Inactive;
-    ReLUState forbidS = s_forced_inactive ? ReLUState::Active   : ReLUState::Inactive;
-    ReLUState forbidT = t_forced_inactive ? ReLUState::Active   : ReLUState::Inactive;
-
-    unsigned varQ = weightedSumLayer->neuronToVariable( q );
-    unsigned varR = weightedSumLayer->neuronToVariable( r );
-    unsigned varS = weightedSumLayer->neuronToVariable( s );
-    unsigned varT = weightedSumLayer->neuronToVariable( t );
-
-    unsigned originalVarQ = _baseIpqPreprocessor.getOldIndex( varQ );
-    unsigned originalVarR = _baseIpqPreprocessor.getOldIndex( varR );
-    unsigned originalVarS = _baseIpqPreprocessor.getOldIndex( varS );
-    unsigned originalVarT = _baseIpqPreprocessor.getOldIndex( varT );
-
-    outDependency = Dependency::Quad( originalVarQ, originalVarR, originalVarS, originalVarT,
-                                      forbidQ, forbidR, forbidS, forbidT );
-
-    printf( "[DA][quad %u,%u,%u,%u] is a quad dependency\n",
-            originalVarQ, originalVarR, originalVarS, originalVarT );
-
-    return true;
-}
-
-
-bool DependencyAnalyzer::lpSliceTwoEqOneDirection(
-    const Vector<double> &w_t,  double b_t,
-    const Vector<double> &w_o1, double b_o1,
-    const Vector<double> &w_o2, double b_o2,
-    const Vector<double> &L,    const Vector<double> &U,
-    bool maximize,
-    double &outVal ) const
-{
-    ASSERT( w_t.size() == w_o1.size() );
-    ASSERT( w_t.size() == w_o2.size() );
-    ASSERT( w_t.size() == L.size() && L.size() == U.size() );
-
-    const unsigned dim = w_t.size();
-
-    GurobiWrapper &lp = _lpReusable;
-
-    if ( !_lpReusableInitialized )
-    {
-        lp.setNumberOfThreads( 1 );
-        lp.setVerbosity( 0 );
-        lp.setTimeLimit( 0.05 );
-        _lpReusableInitialized = true;
-    }
-
-    // Important: clear old variables/constraints/objective
-    lp.resetModel();
-
-    Vector<String> varNames( dim );
-    for ( unsigned j = 0; j < dim; ++j )
-    {
-        String name = Stringf( "z_%u", j );
-        varNames[j] = name;
-        lp.addVariable( name, L[j], U[j], GurobiWrapper::CONTINUOUS );
-    }
-
-    // Equality #1: w_o1 · z = -b_o1
-    List<GurobiWrapper::Term> eq1;
-    for ( unsigned j = 0; j < dim; ++j )
-        if ( !FloatUtils::isZero( w_o1[j] ) )
-            eq1.append( GurobiWrapper::Term( w_o1[j], varNames[j] ) );
-    lp.addEqConstraint( eq1, -b_o1 );
-
-    // Equality #2: w_o2 · z = -b_o2
-    List<GurobiWrapper::Term> eq2;
-    for ( unsigned j = 0; j < dim; ++j )
-        if ( !FloatUtils::isZero( w_o2[j] ) )
-            eq2.append( GurobiWrapper::Term( w_o2[j], varNames[j] ) );
-    lp.addEqConstraint( eq2, -b_o2 );
-
-    // Objective: w_t · z + b_t
-    List<GurobiWrapper::Term> obj;
-    for ( unsigned j = 0; j < dim; ++j )
-        if ( !FloatUtils::isZero( w_t[j] ) )
-            obj.append( GurobiWrapper::Term( w_t[j], varNames[j] ) );
-
-    if ( maximize )
-        lp.setObjective( obj, b_t );
-    else
-        lp.setCost( obj, b_t );
-
-    lp.solve();
-
-    if ( lp.infeasible() || !lp.haveFeasibleSolution() )
-        return false;
-
-    outVal = lp.getOptimalCostOrObjective();
-    return true;
-}
-
-#endif
-void DependencyAnalyzer::_sliceMinMax_givenOther2Zero_LP(
-    const Vector<double> &w_t,  double b_t,
-    const Vector<double> &w_o1, double b_o1,
-    const Vector<double> &w_o2, double b_o2,
-    const Vector<double> &L,    const Vector<double> &U,
-    double &outMin, double &outMax ) const
-{
-#ifdef ENABLE_GUROBI
-    double mn, mx;
-
-    bool okMin = lpSliceTwoEqOneDirection( w_t, b_t, w_o1, b_o1, w_o2, b_o2,
-                                          L, U, /*maximize=*/false, mn );
-    bool okMax = lpSliceTwoEqOneDirection( w_t, b_t, w_o1, b_o1, w_o2, b_o2,
-                                          L, U, /*maximize=*/true,  mx );
-
-    if ( !okMin || !okMax )
-    {
-        outMin = FloatUtils::infinity();
-        outMax = -FloatUtils::infinity();
-        return;
-    }
-
-    outMin = mn;
-    outMax = mx;
-
-#else
-    ASSERT( false && "_sliceMinMax_givenOther2Zero_LP called with ENABLE_GUROBI = false" );
-    outMin = FloatUtils::infinity();
-    outMax = -FloatUtils::infinity();
-#endif
-}
-
-void DependencyAnalyzer::_sliceMinMax_givenOther2Zero( const Vector<double> &w_t,  double b_t,
-                                                       const Vector<double> &w_o1, double b_o1,
-                                                       const Vector<double> &w_o2, double b_o2,
-                                                       const Vector<double> &L, const Vector<double> &U,
-                                                       double &outMin, double &outMax ) const
-{
-    ASSERT( w_t.size() == w_o1.size() );
-    ASSERT( w_t.size() == w_o2.size() );
-    ASSERT( w_t.size() == L.size() && L.size() == U.size() );
-
-    const unsigned dim = w_t.size();
-    ASSERT( dim > 1 );
-
-    // 1) Baseline: ignore equalities
-    double baseMin = 0.0, baseMax = 0.0;
-    _boxMinMax( w_t, b_t, L, U, baseMin, baseMax );
-
-    double bestMin = baseMin; // want largest lower bound
-    double bestMax = baseMax; // want smallest upper bound
-
-    // 2) Try all pivot pairs (k,l) for eliminating x_k and x_l using 2 equalities
-    for ( unsigned k = 0; k < dim; ++k )
-    {
-        for ( unsigned l = k + 1; l < dim; ++l )
+        if ( k == 2 )
         {
-            // Pivot matrix A = [ w_o1[k] w_o1[l] ; w_o2[k] w_o2[l] ]
-            const double a11 = w_o1[k];
-            const double a12 = w_o1[l];
-            const double a21 = w_o2[k];
-            const double a22 = w_o2[l];
+            // Analytic only for size-2
+            unsigned o = ( i == 0 ? 1 : 0 );
+            _sliceMinMax_givenOtherZero( W[i], B[i], W[o], B[o],
+                                         lowerPrev, upperPrev,
+                                         Lcond[i], Ucond[i] );
+        }
+        else
+        {
+#ifdef ENABLE_GUROBI
+            Vector<Vector<double>> w_eq( k - 1 );
+            Vector<double> b_eq( k - 1 );
 
-            const double det = a11 * a22 - a12 * a21;
-            if ( FloatUtils::isZero( det ) )
-                continue; // cannot solve for (x_k, x_l)
-
-            // If target doesn't use either pivot variable, substitution cannot help beyond baseline
-            if ( FloatUtils::isZero( w_t[k] ) && FloatUtils::isZero( w_t[l] ) )
-                continue;
-
-            // Inverse of A:
-            // invA = (1/det) [ a22 -a12 ; -a21 a11 ]
-            const double inv11 =  a22 / det;
-            const double inv12 = -a12 / det;
-            const double inv21 = -a21 / det;
-            const double inv22 =  a11 / det;
-
-            //
-            // We solve:
-            //   A * [x_k; x_l] + sum_{j != k,l} [w_o1[j]; w_o2[j]] x_j + [b_o1; b_o2] = 0
-            // => [x_k; x_l] = - invA * ( [b_o1; b_o2] + sum_{j != k,l} [w_o1[j]; w_o2[j]] x_j )
-            //
-
-            // Constant part for pivots:
-            const double xk_const = -( inv11 * b_o1 + inv12 * b_o2 );
-            const double xl_const = -( inv21 * b_o1 + inv22 * b_o2 );
-
-            // Target after substitution:
-            // y = w_t·x + b_t = b' + sum_{j != k,l} coeff_j x_j
-            double bPrime = b_t + w_t[k] * xk_const + w_t[l] * xl_const;
-
-            double mn = bPrime;
-            double mx = bPrime;
-
-            for ( unsigned j = 0; j < dim; ++j )
+            unsigned p = 0;
+            for ( unsigned j = 0; j < k; ++j )
             {
-                if ( j == k || j == l )
-                    continue;
-
-                // Contribution of x_j to pivots:
-                // [x_k; x_l] has term: -invA * [w_o1[j]; w_o2[j]] * x_j
-                const double xk_coeff_j = -( inv11 * w_o1[j] + inv12 * w_o2[j] );
-                const double xl_coeff_j = -( inv21 * w_o1[j] + inv22 * w_o2[j] );
-
-                // So coefficient of x_j in target:
-                const double coeff = w_t[j] + w_t[k] * xk_coeff_j + w_t[l] * xl_coeff_j;
-
-                if ( coeff >= 0.0 )
-                {
-                    mn += coeff * L[j];
-                    mx += coeff * U[j];
-                }
-                else
-                {
-                    mn += coeff * U[j];
-                    mx += coeff * L[j];
-                }
+                if ( j == i ) continue;
+                w_eq[p] = W[j];
+                b_eq[p] = B[j];
+                ++p;
             }
 
-            // Update best bounds separately
-            if ( FloatUtils::gt( mn, bestMin ) )
-                bestMin = mn;
-
-            if ( FloatUtils::lt( mx, bestMax ) )
-                bestMax = mx;
+            _sliceMinMax_givenMEqZero_LP( W[i], B[i],
+                                          w_eq, b_eq,
+                                          lowerPrev, upperPrev,
+                                          Lcond[i], Ucond[i] );
+#else
+            ASSERT( false && "analyzeConflict size>=3 requires ENABLE_GUROBI" );
+#endif
         }
     }
 
-    outMin = bestMin;
-    outMax = bestMax;
+    // If any slice is infeasible, ignore
+    for ( unsigned i = 0; i < k; ++i )
+    {
+        if ( !FloatUtils::isFinite( Lcond[i] ) || !FloatUtils::isFinite( Ucond[i] ) )
+            return false;
+    }
+
+    // Determine forced phases and require all forced (same rule you use for triple/quad)
+    std::vector<bool> forcedActive( k, false ), forcedInactive( k, false );
+    for ( unsigned i = 0; i < k; ++i )
+    {
+        forcedActive[i]   = FloatUtils::gt( Lcond[i], 0.0 );
+        forcedInactive[i] = FloatUtils::lt( Ucond[i], 0.0 );
+    }
+
+    auto isForced = []( bool fa, bool fi ) {
+        return ( fa && !fi ) || ( fi && !fa );
+    };
+
+    for ( unsigned i = 0; i < k; ++i )
+        if ( !isForced( forcedActive[i], forcedInactive[i] ) )
+            return false;
+
+    // Build forbidden assignment: forced_inactive => forbid Active, forced_active => forbid Inactive
+    std::vector<ReLUState> forbid( k, ReLUState::Inactive );
+    for ( unsigned i = 0; i < k; ++i )
+        forbid[i] = forcedInactive[i] ? ReLUState::Active : ReLUState::Inactive;
+
+    // Map neuron indices -> original Marabou variables
+    std::vector<unsigned> originalVars;
+    originalVars.reserve( k );
+    for ( unsigned i = 0; i < k; ++i )
+    {
+        unsigned var = weightedSumLayer->neuronToVariable( neurons[i] );
+        originalVars.push_back( _baseIpqPreprocessor.getOldIndex( var ) );
+    }
+
+    // Emit Dependency object
+    ASSERT( originalVars.size() == k );
+    ASSERT( forbid.size() == k );
+
+    outDependency = Dependency( originalVars, forbid );
+    return true;
 }
 
 DependencyAnalyzer::Bitmask DependencyAnalyzer::_buildDependencyBitmask(const std::vector<unsigned> &variables) const
@@ -1548,8 +677,6 @@ void DependencyAnalyzer::addDependenciesTocadical( const Dependency &dep )
 {
     printf("\n[DA][SAT] ================================================\n");
     printf("[DA][SAT] Adding dependency to CaDiCaL\n");
-    printf("[DA][SAT] addDependenciesTocadical: this=%p, _cadical=%p\n",
-           (void *)this, (void *)&_cadical);
 
     // Pretty-print the dependency
     const auto &vars   = dep.getVars();
@@ -1685,21 +812,6 @@ void DependencyAnalyzer::_getLayerBounds( const NLR::Layer *layer,
     upperBounds = U;
 }
 
-unsigned DependencyAnalyzer::_argmaxAbsNonzero( const Vector<double> &w ) const
-{
-    ASSERT( w.size() > 0 );
-    unsigned k = 0;
-    double best = 0.0;
-    for ( unsigned j = 0; j < w.size(); ++j )
-    {
-        double a = std::fabs( w[j] );
-        if ( FloatUtils::isZero( a ) ) continue;
-        if ( a > best ) { best = a; k = j; }
-    }
-    ASSERT( !FloatUtils::isZero( best ) ); // must have a nonzero pivot
-    return k;
-}
-
 void DependencyAnalyzer::_boxMinMax( const Vector<double> &a, double b,
                                      const Vector<double> &L, const Vector<double> &U,
                                      double &outMin, double &outMax ) const
@@ -1713,43 +825,6 @@ void DependencyAnalyzer::_boxMinMax( const Vector<double> &a, double b,
         else           { mn += aj * U[j]; mx += aj * L[j]; }
     }
     outMin = mn; outMax = mx;
-}
-
-void DependencyAnalyzer::_sliceMinMax_givenOtherZero_old( const Vector<double> &w_t, double b_t,
-                                                      const Vector<double> &w_o, double b_o,
-                                                      const Vector<double> &L, const Vector<double> &U,
-                                                      double &outMin, double &outMax ) const
-{
-    ASSERT( w_t.size() == w_o.size() && w_t.size() == L.size() && L.size() == U.size() );
-
-    // pivot on largest-magnitude nonzero in w_o
-    const unsigned k = _argmaxAbsNonzero( w_o );
-    const double denom = w_o[k];
-    ASSERT( !FloatUtils::isZero( denom ) );
-
-    // eliminate x_k using w_o·x + b_o = 0  =>  x_k = -(b_o + sum_{j!=k} w_o[j] x_j) / w_o[k]
-    // substitute into w_t·x + b_t  ==>  new affine in remaining variables: a·x + b
-    Vector<double> a; 
-    double b = b_t;
-
-    for ( unsigned j = 0; j < w_t.size(); ++j )
-    {
-        if ( j == k ) continue;
-        // coefficient of x_j after substitution:
-        // w_t[j] + w_t[k] * ( w_o[j] / (-w_o[k]) ) = w_t[j] - w_t[k] * (w_o[j]/w_o[k])
-        double coeff = w_t[j] - ( w_t[k] * ( w_o[j] / denom ) );
-        a.append( coeff );
-    }
-    // constant term adds: w_t[k] * ( b_o / denom ) with a minus sign (since x_k = -(b_o + ...)/w_o[k])
-    b = b_t - ( w_t[k] * ( b_o / denom ) );
-
-    // Build reduced box (drop coordinate k)
-    Vector<double> Lr, Ur;
-    for ( unsigned j = 0; j < L.size(); ++j )
-        if ( j != k ) { Lr.append( L[j] ); Ur.append( U[j] ); }
-
-    // Box min/max on reduced form
-    _boxMinMax( a, b, Lr, Ur, outMin, outMax );
 }
 
 void DependencyAnalyzer::_sliceMinMax_givenOtherZero( const Vector<double> &w_t, double b_t,
@@ -1831,21 +906,103 @@ void DependencyAnalyzer::_sliceMinMax_givenOtherZero( const Vector<double> &w_t,
     outMax = bestMax;
 }
 
+bool DependencyAnalyzer::detectAndRecordConflict(
+    unsigned layerIndex,
+    const std::vector<unsigned> &neurons )
+{
+    const size_t k = neurons.size();
+    ASSERT( k == 2 || k == 3 || k == 4 );
 
+    const NLR::Layer *weightedSumLayer =
+        _networkLevelReasoner->getLayer( layerIndex );
+    ASSERT( weightedSumLayer );
+
+    // --- Map neurons -> original vars ---
+    std::vector<unsigned> vars;
+    vars.reserve( k );
+
+    for ( unsigned n : neurons )
+    {
+        unsigned var = weightedSumLayer->neuronToVariable( n );
+        unsigned originalVar = _baseIpqPreprocessor.getOldIndex( var );
+        vars.push_back( originalVar );
+    }
+
+    // --- Dependency subset pruning ---
+    int dependencySubsetMode = 1; // keep your mode logic
+
+    bool issuperset = false;
+
+    if ( dependencySubsetMode == 1 )
+    {
+        Bitmask depMask = _buildDependencySubBitmask( vars );
+        issuperset = _isNonMinimalDependency( depMask );
+    }
+    else if ( dependencySubsetMode == 2 )
+    {
+        issuperset = _isSupersetOfKnownDependency( vars );
+    }
+    else
+    {
+        ASSERT( false && "Invalid dependencySubsetMode" );
+    }
+
+    if ( issuperset )
+        return false;
+
+    ASSERT( neurons.size() >= 2 && neurons.size() <= 4 );
+
+    Dependency d;
+    bool found = analyzeConflict( layerIndex, neurons, d );
+
+    if ( !found )
+        return false;
+
+    return recordConflict( std::move( d ) );
+}
 
 #ifdef ENABLE_GUROBI
-
-bool DependencyAnalyzer::lpSliceOneDirection(
-    const Vector<double> &w_t, double b_t,
-    const Vector<double> &w_o, double b_o,
-    const Vector<double> &L,  const Vector<double> &U,
-    bool maximize,
-    double &outVal ) const
+void DependencyAnalyzer::_buildLpSliceModelMEq(
+    GurobiWrapper &lp,
+    const Vector<Vector<double>> &w_eq,
+    const Vector<double> &b_eq,
+    const Vector<double> &L, const Vector<double> &U,
+    Vector<String> &varNames ) const
 {
-    ASSERT( w_t.size() == w_o.size() );
-    ASSERT( w_t.size() == L.size() && L.size() == U.size() );
+    const unsigned dim = L.size();
+    const unsigned m   = w_eq.size();
+    ASSERT( m == b_eq.size() );
 
-    const unsigned dim = w_t.size();
+    lp.resetModel();
+
+    varNames = Vector<String>( dim );
+    for ( unsigned j = 0; j < dim; ++j )
+    {
+        String name = Stringf( "z_%u", j );
+        varNames[j] = name;
+        lp.addVariable( name, L[j], U[j], GurobiWrapper::CONTINUOUS );
+    }
+
+    for ( unsigned i = 0; i < m; ++i )
+    {
+        List<GurobiWrapper::Term> eqTerms;
+        for ( unsigned j = 0; j < dim; ++j )
+            if ( !FloatUtils::isZero( w_eq[i][j] ) )
+                eqTerms.append( GurobiWrapper::Term( w_eq[i][j], varNames[j] ) );
+
+        lp.addEqConstraint( eqTerms, -b_eq[i] );
+    }
+}
+#endif
+#ifdef ENABLE_GUROBI
+bool DependencyAnalyzer::lpSliceMEqMinMax(
+    const Vector<double> &w_t, double b_t,
+    const Vector<Vector<double>> &w_eq,
+    const Vector<double> &b_eq,
+    const Vector<double> &L, const Vector<double> &U,
+    double &outMin, double &outMax ) const
+{
+    ASSERT( w_t.size() == L.size() && L.size() == U.size() );
 
     GurobiWrapper &lp = _lpReusable;
 
@@ -1857,248 +1014,73 @@ bool DependencyAnalyzer::lpSliceOneDirection(
         _lpReusableInitialized = true;
     }
 
-    // Important: clear old variables/constraints/objective
-    lp.resetModel();
+    Vector<String> varNames;
+    _buildLpSliceModelMEq( lp, w_eq, b_eq, L, U, varNames );
 
-    Vector<String> varNames( dim );
-
-    for ( unsigned j = 0; j < dim; ++j )
-    {
-        String name = Stringf( "z_%u", j );
-        varNames[j] = name;
-        lp.addVariable( name, L[j], U[j], GurobiWrapper::CONTINUOUS );
-    }
-
-    // w_o·z = -b_o
-    List<GurobiWrapper::Term> eqTerms;
-    for ( unsigned j = 0; j < dim; ++j )
-        if ( !FloatUtils::isZero( w_o[j] ) )
-            eqTerms.append( GurobiWrapper::Term( w_o[j], varNames[j] ) );
-    lp.addEqConstraint( eqTerms, -b_o );
-
-    // Objective: w_t·z + b_t
+    // Build objective terms once
     List<GurobiWrapper::Term> objTerms;
-    for ( unsigned j = 0; j < dim; ++j )
+    for ( unsigned j = 0; j < w_t.size(); ++j )
         if ( !FloatUtils::isZero( w_t[j] ) )
             objTerms.append( GurobiWrapper::Term( w_t[j], varNames[j] ) );
 
-    if ( maximize )
-        lp.setObjective( objTerms, b_t );
-    else
-        lp.setCost( objTerms, b_t );
-
+    bool isOk = true;
+    // --- MIN ---
+    lp.setCost( objTerms, b_t );   // minimize
     lp.solve();
-
     if ( lp.infeasible() || !lp.haveFeasibleSolution() )
-        return false;
-
-    outVal = lp.getOptimalCostOrObjective();
-    return true;
-}
-
-#else
-
-bool DependencyAnalyzer::lpSliceOneDirection(
-    const Vector<double> &, double,
-    const Vector<double> &, double,
-    const Vector<double> &, const Vector<double> &,
-    bool, double & ) const
-{
-    ASSERT( false && "lpSliceOneDirection called with ENABLE_GUROBI = false" );
-    return false;
-}
-
-#endif
-
-#ifdef ENABLE_GUROBI
-
-void DependencyAnalyzer::_sliceMinMax_givenOtherZero_LP(
-    const Vector<double> &w_t, double b_t,
-    const Vector<double> &w_o, double b_o,
-    const Vector<double> &L,  const Vector<double> &U,
-    double &outMin, double &outMax ) const
-{
-    printf("\n[DA][LP-SLICE] === Begin LP slice (other=0) ===\n");
-
-    // Print sizes
-    printf("[DA][LP-SLICE] dim = %u\n", w_t.size());
-
-    // Print target neuron affine
-    // printf("[DA][LP-SLICE] Target y_t = w_t·z + b_t  (b_t = %.6f)\n", b_t);
-    // printf("[DA][LP-SLICE] w_t = [");
-    // for ( unsigned j = 0; j < w_t.size(); ++j )
-    //     printf(" %.4f", w_t[j]);
-    // printf(" ]\n");
-
-    // Print conditioning neuron affine
-    // printf("[DA][LP-SLICE] Condition y_o = 0 = w_o·z + b_o  (b_o = %.6f)\n", b_o);
-    // printf("[DA][LP-SLICE] w_o = [");
-    // for ( unsigned j = 0; j < w_o.size(); ++j )
-    //     printf(" %.4f", w_o[j]);
-    // printf(" ]\n");
-
-    // Print box bounds
-    // printf("[DA][LP-SLICE] Box bounds L,U per coordinate:\n");
-    // for ( unsigned j = 0; j < L.size(); ++j )
-    //     printf("    j=%u : [ %.4f , %.4f ]\n", j, L[j], U[j]);
-
-    double mn, mx;
-
-    // Solve MIN LP
-    bool okMin = lpSliceOneDirection(
-        w_t, b_t,
-        w_o, b_o,
-        L, U,
-        /*maximize=*/false,
-        mn
-    );
-
-    printf("[DA][LP-SLICE] LP result (MIN): ");
-    if ( okMin ) printf("mn = %.9f\n", mn);
-    else         printf("INFEASIBLE\n");
-
-    // Solve MAX LP
-    bool okMax = lpSliceOneDirection(
-        w_t, b_t,
-        w_o, b_o,
-        L, U,
-        /*maximize=*/true,
-        mx
-    );
-
-    printf("[DA][LP-SLICE] LP result (MAX): ");
-    if ( okMax ) printf("mx = %.9f\n", mx);
-    else         printf("INFEASIBLE\n");
-
-    // Infeasible slice: no point in the box satisfies y_o=0
-    if ( !okMin || !okMax )
-    {
-        printf("[DA][LP-SLICE] *** No feasible slice: marking bounds as +/- infinity ***\n");
-        outMin = FloatUtils::infinity();
-        outMax = -FloatUtils::infinity();
-        printf("[DA][LP-SLICE] === End LP slice (FAILED) ===\n\n");
-        return;
-    }
-
-    // Store results
-    outMin = mn;
-    outMax = mx;
-
-    printf("[DA][LP-SLICE] Final LP bounds:  min = %.9f , max = %.9f\n", outMin, outMax);
-    printf("[DA][LP-SLICE] === End LP slice ===\n\n");
-}
-
-#else // !ENABLE_GUROBI
-
-void DependencyAnalyzer::_sliceMinMax_givenOtherZero_LP(
-    const Vector<double> &w_t, double b_t,
-    const Vector<double> &w_o, double b_o,
-    const Vector<double> &L,  const Vector<double> &U,
-    double &outMin, double &outMax ) const
-{
-    // Fallback: if Gurobi is disabled, just use the analytic version
-    _sliceMinMax_givenOtherZero( w_t, b_t, w_o, b_o, L, U, outMin, outMax );
-}
-
-#endif
-
-#ifdef ENABLE_GUROBI
-bool DependencyAnalyzer::lpSliceThreeEqOneDirection(
-    const Vector<double> &w_t,  double b_t,
-    const Vector<double> &w_o1, double b_o1,
-    const Vector<double> &w_o2, double b_o2,
-    const Vector<double> &w_o3, double b_o3,
-    const Vector<double> &L,    const Vector<double> &U,
-    bool maximize,
-    double &outVal ) const
-{
-    ASSERT( w_t.size() == w_o1.size() );
-    ASSERT( w_t.size() == w_o2.size() );
-    ASSERT( w_t.size() == w_o3.size() );
-    ASSERT( w_t.size() == L.size() && L.size() == U.size() );
-
-    const unsigned dim = w_t.size();
-
-    GurobiWrapper &lp = _lpReusable;
-    if ( !_lpReusableInitialized )
-    {
-        lp.setNumberOfThreads( 1 );
-        lp.setVerbosity( 0 );
-        lp.setTimeLimit( 0.05 );
-        _lpReusableInitialized = true;
-    }
-    lp.resetModel();
-
-    Vector<String> varNames( dim );
-    for ( unsigned j = 0; j < dim; ++j )
-    {
-        String name = Stringf( "z_%u", j );
-        varNames[j] = name;
-        lp.addVariable( name, L[j], U[j], GurobiWrapper::CONTINUOUS );
-    }
-
-    auto addEq = [&]( const Vector<double> &w, double b )
-    {
-        List<GurobiWrapper::Term> eq;
-        for ( unsigned j = 0; j < dim; ++j )
-            if ( !FloatUtils::isZero( w[j] ) )
-                eq.append( GurobiWrapper::Term( w[j], varNames[j] ) );
-        lp.addEqConstraint( eq, -b );
-    };
-
-    addEq( w_o1, b_o1 );
-    addEq( w_o2, b_o2 );
-    addEq( w_o3, b_o3 );
-
-    List<GurobiWrapper::Term> obj;
-    for ( unsigned j = 0; j < dim; ++j )
-        if ( !FloatUtils::isZero( w_t[j] ) )
-            obj.append( GurobiWrapper::Term( w_t[j], varNames[j] ) );
-
-    if ( maximize )
-        lp.setObjective( obj, b_t );
-    else
-        lp.setCost( obj, b_t );
-
-    lp.solve();
-
-    if ( lp.infeasible() || !lp.haveFeasibleSolution() )
-        return false;
-
-    outVal = lp.getOptimalCostOrObjective();
-    return true;
-}
-#endif
-void DependencyAnalyzer::_sliceMinMax_givenOther3Zero_LP(
-    const Vector<double> &w_t,  double b_t,
-    const Vector<double> &w_o1, double b_o1,
-    const Vector<double> &w_o2, double b_o2,
-    const Vector<double> &w_o3, double b_o3,
-    const Vector<double> &L,    const Vector<double> &U,
-    double &outMin, double &outMax ) const
-{
-#ifdef ENABLE_GUROBI
-    double mn, mx;
-    bool okMin = lpSliceThreeEqOneDirection( w_t, b_t, w_o1, b_o1, w_o2, b_o2, w_o3, b_o3,
-                                            L, U, false, mn );
-    bool okMax = lpSliceThreeEqOneDirection( w_t, b_t, w_o1, b_o1, w_o2, b_o2, w_o3, b_o3,
-                                            L, U, true,  mx );
-
-    if ( !okMin || !okMax )
     {
         outMin = FloatUtils::infinity();
+        isOk = false;
+    }
+    else
+        outMin = lp.getOptimalCostOrObjective();
+
+    // --- MAX ---
+    // IMPORTANT: this must only change objective, not rebuild model.
+    lp.setObjective( objTerms, b_t ); // maximize
+    lp.solve();
+    if ( lp.infeasible() || !lp.haveFeasibleSolution() )
+    {
         outMax = -FloatUtils::infinity();
-        return;
+        isOk = false;
+    }
+    else
+        outMax = lp.getOptimalCostOrObjective();
+
+    return isOk;
+
+}
+#endif
+
+#ifdef ENABLE_GUROBI
+
+void DependencyAnalyzer::_sliceMinMax_givenMEqZero_LP(
+    const Vector<double> &w_t, double b_t,
+    const Vector<Vector<double>> &w_eq,
+    const Vector<double> &b_eq,
+    const Vector<double> &L, const Vector<double> &U,
+    double &outMin, double &outMax ) const
+{
+    double mn = 0.0, mx = 0.0;
+
+    bool ok = lpSliceMEqMinMax(
+        w_t, b_t,
+        w_eq, b_eq,
+        L, U,
+        mn, mx
+    );
+
+    if ( !ok )
+    {
+        printf( "[DA][LP-SLICE][warning] LP slice infeasible!\n" );
     }
 
     outMin = mn;
     outMax = mx;
-#else
-    ASSERT( false && "_sliceMinMax_givenOther3Zero_LP called with ENABLE_GUROBI = false" );
-    outMin = FloatUtils::infinity();
-    outMax = -FloatUtils::infinity();
-#endif
 }
+
+#endif
+
 
 
 
@@ -2196,116 +1178,7 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned newVar, ReLUState state )
         printf("[DA][debug] _seenPhase is empty.\n");
     }
     /**************** End Debug ****************/
-
-    Vector<DependencyState::DependencyId> depsToUpdate;
-
-    // Add watchers for (var, Active)
-    {
-        auto itA = _watchActive.find( var );
-        if ( itA != _watchActive.end() )
-        {
-            const auto &vecA = itA->second;
-            for ( unsigned i = 0; i < vecA.size(); ++i )
-                depsToUpdate.append( vecA[i] );
-        }
-    }
-
-    // Add watchers for (var, Inactive)
-    {
-        auto itI = _watchInactive.find( var );
-        if ( itI != _watchInactive.end() )
-        {
-            const auto &vecI = itI->second;
-            for ( unsigned i = 0; i < vecI.size(); ++i )
-                depsToUpdate.append( vecI[i] );
-        }
-    }
-
-    if ( depsToUpdate.empty() )
-    {
-        printf("[DA][debug] No dependencies watch var %u (either phase)\n", var);
-        return false;
-    }
-
-    printf("[DA][debug] var %u is watched by %u dependencies\n",
-        var, depsToUpdate.size());
-
-    // IDs of dependencies that contain literal (var, state)
-    const Vector<DependencyState::DependencyId> &depIds = depsToUpdate;
-    bool foundDep = false;
-
-    // Update runtime states for all dependencies watching (var, state)
-    for ( unsigned t = 0; t < depIds.size(); ++t )
-    {
-        const DependencyState::DependencyId depId = depIds[t];
-        ASSERT( depId < _dependencies.size() && depId < _dependencyStates.size() );
-
-        const Dependency &dep = _dependencies[ depId ];
-        DependencyState  &depState  = _dependencyStates[ depId ];
-
-        // Find aligned index i s.t. dep.getVars()[i] == var
-        const std::vector<unsigned>   &vars   = dep.getVars();
-        // const std::vector<ReLUState>  &literalPhases = dep.getStates();  // polarity of the nogood (not used here)
-
-        int idx = -1;
-        for ( unsigned i = 0; i < vars.size(); ++i )
-            if ( vars[i] == var ) { idx = i; break; }
-
-        // Sanity: the var must be present (because it’s in the watch list)
-        ASSERT( idx >= 0 );
-
-        // Sanity: we should be transitioning from Unstable → {Active/Inactive}
-        if ( incoming != ReLURuntimeState::Zero)
-            ASSERT( depState.getLiteralState( idx ) == ReLURuntimeState::Unstable );
-        if ( incoming == ReLURuntimeState::Active )
-            depState.setActive( idx );
-        else if ( incoming == ReLURuntimeState::Inactive )
-            depState.setInactive( idx );
-        else if ( incoming == ReLURuntimeState::Zero)
-            depState.setZero( idx );
-        else 
-            ASSERT(false);
-
-        // Apply the observed runtime state
-        unsigned impliedVar = 0;
-        ReLUState impliedPhase = ReLUState::Active; // default, will be overwritten
-
-        if ( depState.checkImplication( dep, impliedVar, impliedPhase ) )
-        {
-            // For now we just record that this dependency is “active”;
-            // later we can also store (impliedVar, impliedPhase) somewhere.
-            // TODO: check that it is not in _activeDepIds before appending
-
-            // Add depId only if not already present
-            if ( std::find( _activeDepIds.begin(), _activeDepIds.end(), depId )
-                == _activeDepIds.end() )
-            {
-                _activeDepIds.append( depId );
-                foundDep = true;
-                printf("[DA] Dep %u added to _activeDepIds\n", depId);
-            }
-            else
-            {
-                printf("[DA] Dep %u already present in _activeDepIds, skipping\n", depId);
-                ASSERT(false);
-                continue;
-            }
-
-            // Optional debug:
-            printf("[DA] Dep %u implies var %u must be %s\n",
-                depId,
-                impliedVar,
-                (impliedPhase == ReLUState::Active ? "Active" : "Inactive"));
-        }
-
-
-    }
-    if ( foundDep )
-    {
-        printf("Found!!");
-        printf("[DA] [notifyNeuronFixed] Applicable dependecies found: %u \n", _activeDepIds.size());
-    }
-    return foundDep;
+    return true;
 }
 
 void DependencyAnalyzer::notifyLowerBoundUpdate( unsigned newVar,
@@ -2533,116 +1406,6 @@ void DependencyAnalyzer::notifyQuerySolved()
     _dependencyStates.clear();
 
     // computeDependencies(); # todo in the setcontex
-}
-
-void DependencyAnalyzer::getImpliedTightenings( List<Tightening> &tightenings )
-{
-    // Caller should pass an empty list; we only append.
-    // Preconditions: setContext() was called, so these should be valid.
-    ASSERT( _context );
-    ASSERT( _preprocessedQuery );
-    ASSERT( _networkLevelReasoner );
-
-    if ( _activeDepIds.empty() )
-    {
-        printf("[DA][getImpliedTightenings] no active dependencies\n");
-        return;
-    }
-
-    printf("[DA][getImpliedTightenings] processing %u active dependencies\n",
-           _activeDepIds.size());
-
-    for ( unsigned idx = 0; idx < _activeDepIds.size(); ++idx )
-    {
-        const DependencyState::DependencyId depId = _activeDepIds[idx];
-
-        ASSERT( depId < _dependencies.size() );
-        ASSERT( depId < _dependencyStates.size() );
-
-        const Dependency &dep      = _dependencies[depId];
-        DependencyState  &depState = _dependencyStates[depId];
-
-        unsigned  impliedOldVar   = 0;
-        ReLUState impliedPhase = ReLUState::Active; // will be overwritten
-
-        bool hasImplication = depState.checkImplication( dep, impliedOldVar, impliedPhase );
-
-        unsigned  impliedVarCurr = _preprocessor->getNewIndex(impliedOldVar);
-        unsigned  impliedVarBase = _baseIpqPreprocessor.getNewIndex(impliedOldVar);
-        // By design, any depId in _activeDepIds must imply something.
-        if( !hasImplication ) continue;
-
-        double lb = _preprocessedQuery->getLowerBound( impliedVarBase ); //TODO: Get bounds in the query from the engine not the bounds from our _preprocessedQuery
-        double ub = _preprocessedQuery->getUpperBound( impliedVarBase );
-
-        printf("[DA][getImpliedTightenings] dep %u implies var %u (curr var %u) must be %s "
-               "(current bounds: [%.10g, %.10g])\n",
-               depId,
-               impliedOldVar,
-               impliedVarCurr,
-               ( impliedPhase == ReLUState::Active ? "Active" : "Inactive" ),
-               lb, ub );
-
-        if ( impliedPhase == ReLUState::Active )
-        {
-            // Active ⇒ pre-activation >= 0
-            const double newLb = 0.0;
-
-            // Safety: new LB cannot exceed current UB
-            ASSERT( !FloatUtils::gt( newLb, ub ) );
-            ASSERT( FloatUtils::gt( newLb, lb ) );
-
-            // If this does not strengthen the LB, skip emitting a tightening
-            if ( !FloatUtils::gt( newLb, lb ) )
-            {
-                printf("[DA][getImpliedTightenings]   skip: LB already >= 0 for var %u (curr var %u)\n",
-                       impliedOldVar, impliedVarCurr );
-                continue;
-            }
-
-            Tightening t( impliedVarCurr, newLb, Tightening::LB );
-            tightenings.append( t );
-
-            printf("[DA][getImpliedTightenings]   -> emit LB tightening: x%u (curr var %u) >= %.10g\n",
-                   impliedOldVar, impliedVarCurr, newLb );
-        }
-        else
-        {
-            // impliedPhase == ReLUState::Inactive
-            ASSERT( impliedPhase == ReLUState::Inactive );
-            const double newUb = 0.0;
-
-            // Safety: new UB cannot go below current LB
-            ASSERT( !FloatUtils::lt( newUb, lb ) );
-            ASSERT( FloatUtils::lt( newUb, ub ) );
-
-            // If this does not strengthen the UB, skip
-            if ( !FloatUtils::lt( newUb, ub ) )
-            {
-                printf("[DA][getImpliedTightenings]   skip: UB already <= 0 for var %u (curr var %u)\n",
-                       impliedOldVar, impliedVarCurr );
-                continue;
-            }
-
-            Tightening t( impliedVarCurr, newUb, Tightening::UB );
-            tightenings.append( t );
-
-            printf("[DA][getImpliedTightenings]   -> emit UB tightening: x%u (curr var %u) <= %.10g\n",
-                   impliedOldVar, impliedVarCurr, newUb );
-        }
-    }
-
-    // Simple initial policy: after we’ve emitted tightenings for all active deps,
-    // clear the list. New notifications will repopulate _activeDepIds.
-    _activeDepIds.clear();
-    // List<Tightening> tightenings2;
-    // getImpliedTighteningsFromSat(tightenings2);
-
-    // printf("[DA][getImpliedTightenings] COMPARE:\n");
-    printf("[DA][getImpliedTightenings] done, emitted %u tightenings\n",
-           tightenings.size());
-    // printf("[DA][getImpliedTighteningsFromSat] done, emitted %u tightenings\n",
-    //        tightenings2.size());
 }
 
 void DependencyAnalyzer::_collectAllUnstableNeurons()
@@ -2916,7 +1679,6 @@ void DependencyAnalyzer::_emitTighteningsForImpliedPhase( unsigned reluVar,
 void DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tightenings )
 {
     debugPrintSatClauses();
-    _activeDepIds.clear();
     printf("\n[DA][SAT] ===== getImpliedTighteningsFromSat =====\n");
 
     // 3.1 Build assumptions from _seenPhase and call assume inline
@@ -3021,6 +1783,7 @@ void DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tighten
 
 void DependencyAnalyzer::debugPrintSatClauses()
 {
+    return; // disable for now
     printf("[DA][SAT] debugPrintSatClauses: this=%p, _cadical=%p\n",
            (void *)this, (void *)&_cadical);
 

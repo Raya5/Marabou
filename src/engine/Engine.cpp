@@ -317,9 +317,6 @@ bool Engine::solve( double timeoutInSeconds )
                     // DA hook
                     if ( _incrementalMode )
                     {
-                        double lbr = _preprocessedQuery->getLowerBound( 797 );
-                        double ubr = _preprocessedQuery->getUpperBound( 797 );
-                        printf("[Engine][debug] 797 bounds: [%.10g, %.10g]\n", lbr, ubr);
                         printf("[Engine][IV] Basis-phase → applyDependencyAnalyzerTightenings()\n");
                         applyDependencyAnalyzerTightenings();
                     }
@@ -4157,16 +4154,7 @@ void Engine::applyDependencyAnalyzerTightenings()
       around for debugging / comparison and can be re-enabled if needed.
     */
     List<Tightening> tightenings;
-
-    const bool useSatBasedTightenings = true;
-    if ( useSatBasedTightenings )
-    {
-        _dependencyAnalyzer->getImpliedTighteningsFromSat( tightenings );
-    }
-    else
-    {
-        _dependencyAnalyzer->getImpliedTightenings( tightenings );
-    }
+    _dependencyAnalyzer->getImpliedTighteningsFromSat( tightenings );
 
     if ( tightenings.empty() )
     {
@@ -4199,6 +4187,8 @@ void Engine::applyDependencyAnalyzerTightenings()
             ASSERT( !FloatUtils::lt( newLb, currentLb ) );
 
             _boundManager.tightenLowerBound( tableauVar, newLb );
+        printf( "[Engine][IV][Debug] 4\n" );
+
         }
         else if ( tightening._type == Tightening::UB )
         {
@@ -4214,11 +4204,16 @@ void Engine::applyDependencyAnalyzerTightenings()
             ASSERT( !FloatUtils::gt( newUb, currentUb ) );
 
             _boundManager.tightenUpperBound( tableauVar, newUb );
+        printf( "[Engine][IV][Debug] 5\n" );
+
         }
         else
         {
             // Tightening type must be LB or UB
             ASSERT( false );
         }
+        printf( "[Engine][IV][Debug] 6\n" );
+
     }
+        printf( "[Engine][IV][Debug] 7\n" );
 }

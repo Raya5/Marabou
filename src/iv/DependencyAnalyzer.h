@@ -109,28 +109,6 @@ public:
     unsigned computeSameLayerDependencies(); //TODO: add description, this is for all the layers.
 
     /*
-      Test a single pair (q,r) and record a conflict if one is found. Returns true iff a new conflict was added.
-    */
-    bool detectAndRecordPairConflict(unsigned layerIndex,
-                                 unsigned neuronA, unsigned neuronB);
-
-    /*
-      Analyze whether neurons q and r in the same layer form a dependency
-      (forbidden ReLU state combination). If found, populate outDependency.
-
-      Returns true if a dependency was detected, false otherwise.
-    */
-    bool analyzePairConflict( unsigned layerIndex,
-                              unsigned q, unsigned r,
-                              Dependency &outDependency );
-
-    /*
-      TODO
-    */
-    bool detectAndRecordQuadConflict( unsigned layerIndex,
-                                      unsigned q, unsigned r, unsigned s, unsigned t );
-
-    /*
       TODO
     */
     bool _isSupersetOfKnownDependency(const std::vector<unsigned> &variables) const;
@@ -157,19 +135,6 @@ public:
                           Vector<double> &upperBounds ) const;
                           
     /*
-      Return index of largest-magnitude nonzero entry in w (ASSERT if all zero).
-    */
-    unsigned _argmaxAbsNonzero( const Vector<double> &w ) const;
-
-    /*
-      Compute min/max of target (w_t·x + b_t) subject to box L<=x<=U and equality (w_o·x + b_o = 0).
-      Uses a single-variable elimination with argmax-abs pivot from w_o.
-    */
-    void _sliceMinMax_givenOtherZero_old( const Vector<double> &w_target, double b_target,
-                                      const Vector<double> &w_other,  double b_other,
-                                      const Vector<double> &L, const Vector<double> &U,
-                                      double &outMin, double &outMax ) const;
-    /*
       Compute min/max of target (w_t·x + b_t) subject to box L<=x<=U and equality (w_o·x + b_o = 0).
       Uses a single-variable elimination with argmax-abs pivot from w_o.
     */
@@ -179,100 +144,68 @@ public:
                                       double &outMin, double &outMax ) const;
 
     /*
-      TODO
-    */
-    bool lpSliceOneDirection(
-        const Vector<double> &w_t, double b_t,
-        const Vector<double> &w_o, double b_o,
-        const Vector<double> &L,  const Vector<double> &U,
-        bool maximize,
-        double &outVal ) const;
-
-    /*
-      TODO
-    */
-    void _sliceMinMax_givenOtherZero_LP(
-        const Vector<double> &w_t, double b_t,
-        const Vector<double> &w_o, double b_o,
-        const Vector<double> &L,  const Vector<double> &U,
-        double &outMin, double &outMax ) const;
-
-    /*
       Interval extrema over a box for affine form a·x + b (no equalities).
     */
     void _boxMinMax( const Vector<double> &a, double b,
                     const Vector<double> &L, const Vector<double> &U,
                     double &outMin, double &outMax ) const;
-       
-    /*
-      TODO
-    */
-    bool detectAndRecordTripleConflict( unsigned layerIndex,
-                                        unsigned q, unsigned r, unsigned s );
-    /*
-      TODO
-    */
-    bool analyzeTripleConflict( unsigned layerIndex,
-                                unsigned q, unsigned r, unsigned s,
-                                Dependency &outDependency );
 
     /*
       TODO
     */
-    bool analyzeQuadConflict( unsigned layerIndex,
-                                              unsigned q, unsigned r, unsigned s, unsigned t,
-                                              Dependency &outDependency );
+    bool lpSliceMEqOneDirection(
+      const Vector<double> &w_t, double b_t,
+      const Vector<Vector<double>> &w_eq,
+      const Vector<double> &b_eq,
+      const Vector<double> &L, const Vector<double> &U,
+      bool maximize,
+      double &outVal ) const;
 
     /*
       TODO
     */
-    bool lpSliceThreeEqOneDirection(
-        const Vector<double> &w_t,  double b_t,
-        const Vector<double> &w_o1, double b_o1,
-        const Vector<double> &w_o2, double b_o2,
-        const Vector<double> &w_o3, double b_o3,
-        const Vector<double> &L,    const Vector<double> &U,
-        bool maximize,
-        double &outVal ) const;
-    /*
-      TODO
-    */
-    bool lpSliceTwoEqOneDirection(
-        const Vector<double> &w_t,  double b_t,
-        const Vector<double> &w_o1, double b_o1,
-        const Vector<double> &w_o2, double b_o2,
-        const Vector<double> &L,    const Vector<double> &U,
-        bool maximize,
-        double &outVal ) const;
-    /*
-      TODO
-    */
-    void _sliceMinMax_givenOther3Zero_LP(
-        const Vector<double> &w_t,  double b_t,
-        const Vector<double> &w_o1, double b_o1,
-        const Vector<double> &w_o2, double b_o2,
-        const Vector<double> &w_o3, double b_o3,
-        const Vector<double> &L,    const Vector<double> &U,
+    void _sliceMinMax_givenMEqZero_LP(
+        const Vector<double> &w_t, double b_t,
+        const Vector<Vector<double>> &w_eq,
+        const Vector<double> &b_eq,
+        const Vector<double> &L, const Vector<double> &U,
         double &outMin, double &outMax ) const;
-    /*
-      TODO
-    */
-    void _sliceMinMax_givenOther2Zero_LP(
-        const Vector<double> &w_t,  double b_t,
-        const Vector<double> &w_o1, double b_o1,
-        const Vector<double> &w_o2, double b_o2,
-        const Vector<double> &L,    const Vector<double> &U,
-        double &outMin, double &outMax ) const;
-    /*
-      TODO
-    */
-    void _sliceMinMax_givenOther2Zero( const Vector<double> &w_t,  double b_t,
-                                                          const Vector<double> &w_o1, double b_o1,
-                                                          const Vector<double> &w_o2, double b_o2,
-                                                          const Vector<double> &L, const Vector<double> &U,
-                                                          double &outMin, double &outMax ) const;
 
-                                                          /*
+    /*
+      TODO 
+    */
+    bool analyzeConflict( unsigned layerIndex,
+                                            const std::vector<unsigned> &neurons,
+                                            Dependency &outDependency );
+
+
+    /*
+      TODO
+    */
+    bool detectAndRecordConflict( unsigned layerIndex,
+                                  const std::vector<unsigned> &neurons );
+
+    /*
+      TODO
+    */
+    bool lpSliceMEqMinMax(
+        const Vector<double> &w_t, double b_t,
+        const Vector<Vector<double>> &w_eq,
+        const Vector<double> &b_eq,
+        const Vector<double> &L, const Vector<double> &U,
+        double &outMin, double &outMax ) const;
+
+    /*
+      TODO
+    */
+    void _buildLpSliceModelMEq(
+        GurobiWrapper &lp,
+        const Vector<Vector<double>> &w_eq,
+        const Vector<double> &b_eq,
+        const Vector<double> &L, const Vector<double> &U,
+        Vector<String> &varNames ) const;
+
+    /*
       Notify the DependencyAnalyzer that a ReLU pre-activation variable
       (identified by its Marabou variable ID) has been fixed to a phase.
 
@@ -312,12 +245,6 @@ public:
         analyzer stays synchronized with the incremental solve cycle.
     */
     void notifyQuerySolved();
-
-
-    /*
-        Add description. 
-    */
-    void getImpliedTightenings( List<Tightening> &tightenings );
 
     /*
       Synchronize unstable neurons with the Engine's preprocessed query.
@@ -407,8 +334,6 @@ private:
     // ---- Watches: var -> deps containing that var with the given state ----
     std::unordered_map<unsigned, Vector<DependencyState::DependencyId>> _watchActive;    // Dependencies containing (var, Active)
     std::unordered_map<unsigned, Vector<DependencyState::DependencyId>> _watchInactive;  // Dependencies containing (var, Inactive)
-
-    Vector<DependencyState::DependencyId> _activeDepIds;
 
     // List of pre-activation variables that are unstable (lb < 0 < ub)
     // at the initial covering box / DeepPoly run.
