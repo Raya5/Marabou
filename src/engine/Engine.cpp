@@ -199,13 +199,11 @@ bool Engine::solve( double timeoutInSeconds )
     if ( _incrementalMode ) {
         ASSERT( _dependencyAnalyzer );
         ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
-        printf( "[Engine] Context to be set in analyzer.\n" );
         _dependencyAnalyzer->setContext( &_context);
         _dependencyAnalyzer->setPreprocessor( &_preprocessor);
 
        // Sync DA with Engine's preprocessed query
        ASSERT( _preprocessedQuery );
-       printf( "[Engine][IV] syncing DA with Engine preprocessed query\n" );
        _dependencyAnalyzer->syncWithEnginePreprocessedQuery( *_preprocessedQuery );
 
         _boundManager.setDependencyAnalyzer( _dependencyAnalyzer );
@@ -237,11 +235,6 @@ bool Engine::solve( double timeoutInSeconds )
         _milpEncoder->setStatistics( &_statistics );
         _milpEncoder->encodeQuery( *_gurobi, *_preprocessedQuery, true );
         ENGINE_LOG( "Encoding convex relaxation into Gurobi - done" );
-    }
-
-    if (_incrementalMode)
-    {
-        printf( "\n**************   incremental Mode **************\n" );
     }
 
     mainLoopStatistics();
@@ -315,11 +308,6 @@ bool Engine::solve( double timeoutInSeconds )
                 {
                     explicitBasisBoundTightening();
                     // DA hook
-                    if ( _incrementalMode )
-                    {
-                        printf("[Engine][IV] Basis-phase → applyDependencyAnalyzerTightenings()\n");
-                        applyDependencyAnalyzerTightenings();
-                    }
                     _boundManager.propagateTightenings();
                     applyAllValidConstraintCaseSplits();
                 }
@@ -332,7 +320,6 @@ bool Engine::solve( double timeoutInSeconds )
                 // DA hook
                 if ( _incrementalMode )
                 {
-                    printf("[Engine][IV] After-split phase → applyDependencyAnalyzerTightenings()\n");
                     applyDependencyAnalyzerTightenings();
                 }
                 informLPSolverOfBounds();
@@ -2234,7 +2221,7 @@ bool Engine::applyValidConstraintCaseSplit( PiecewiseLinearConstraint *constrain
     if ( constraint->isActive() && constraint->phaseFixed() )
     {
         String constraintString;
-        constraint->dump( constraintString );
+        // constraint->dump( constraintString );
         ENGINE_LOG( Stringf( "A constraint has become valid. Dumping constraint: %s",
                              constraintString.ascii() )
                         .ascii() );
@@ -4158,7 +4145,6 @@ void Engine::applyDependencyAnalyzerTightenings()
 
     if ( tightenings.empty() )
     {
-        printf( "[Engine][IV] applyDependencyAnalyzerTightenings: no tightenings\n" );
         return;
     }
 
@@ -4177,26 +4163,17 @@ void Engine::applyDependencyAnalyzerTightenings()
         {
             const double newLb = tightening._value;
 
-            printf( "[Engine][IV] DA tightening: x%u (orig %u) LB: %.10g -> %.10g (UB = %.10g)\n",
-                    tableauVar, engineVar,
-                    currentLb, newLb, currentUb );
-
             // Safety: new LB must not exceed current UB
             ASSERT( !FloatUtils::gt( newLb, currentUb ) );
             // The analyzer should not emit strictly worse LBs
             ASSERT( !FloatUtils::lt( newLb, currentLb ) );
 
             _boundManager.tightenLowerBound( tableauVar, newLb );
-        printf( "[Engine][IV][Debug] 4\n" );
 
         }
         else if ( tightening._type == Tightening::UB )
         {
             const double newUb = tightening._value;
-
-            printf( "[Engine][IV] DA tightening: x%u (orig %u) UB: %.10g -> %.10g (LB = %.10g)\n",
-                    tableauVar, engineVar,
-                    currentUb, newUb, currentLb );
 
             // Safety: new UB must not go below current LB
             ASSERT( !FloatUtils::lt( newUb, currentLb ) );
@@ -4204,7 +4181,6 @@ void Engine::applyDependencyAnalyzerTightenings()
             ASSERT( !FloatUtils::gt( newUb, currentUb ) );
 
             _boundManager.tightenUpperBound( tableauVar, newUb );
-        printf( "[Engine][IV][Debug] 5\n" );
 
         }
         else
@@ -4212,8 +4188,5 @@ void Engine::applyDependencyAnalyzerTightenings()
             // Tightening type must be LB or UB
             ASSERT( false );
         }
-        printf( "[Engine][IV][Debug] 6\n" );
-
     }
-        printf( "[Engine][IV][Debug] 7\n" );
 }

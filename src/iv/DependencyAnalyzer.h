@@ -108,11 +108,6 @@ public:
     unsigned computeSameLayerDependencies( unsigned weightedSumLayerIndex );
     unsigned computeSameLayerDependencies(); //TODO: add description, this is for all the layers.
 
-    /*
-      TODO
-    */
-    bool _isSupersetOfKnownDependency(const std::vector<unsigned> &variables) const;
-
     // --- Bitmask-based minimal dependency tracking ---
     Bitmask _buildDependencyBitmask(const std::vector<unsigned> &variables) const;
     Bitmask _buildDependencySubBitmask(const std::vector<unsigned> &variables) const;
@@ -330,10 +325,6 @@ private:
 
     std::vector<Dependency> _dependencies;         // flat store; id = index
     std::vector<DependencyState> _dependencyStates; // runtime, parallel to _dependencies
-
-    // ---- Watches: var -> deps containing that var with the given state ----
-    std::unordered_map<unsigned, Vector<DependencyState::DependencyId>> _watchActive;    // Dependencies containing (var, Active)
-    std::unordered_map<unsigned, Vector<DependencyState::DependencyId>> _watchInactive;  // Dependencies containing (var, Inactive)
 
     // List of pre-activation variables that are unstable (lb < 0 < ub)
     // at the initial covering box / DeepPoly run.

@@ -190,8 +190,6 @@ bool BoundManager::setLowerBound( unsigned variable, double value )
 
         if ( _dependencyAnalyzer )
         {
-            printf( "[BM][debug] setLowerBound: var %u, LB %.6f -> %.6f\n",
-                    variable, oldLb, value );
             _dependencyAnalyzer->notifyLowerBoundUpdate( variable, oldLb, value );
         }
 
@@ -216,9 +214,6 @@ bool BoundManager::setUpperBound( unsigned variable, double value )
 
         if ( _dependencyAnalyzer )
         {
-            double currentLb = _lowerBounds[variable];
-            printf( "[BM][debug] setUpperBound: var %u, UB %.6f -> %.6f (LB %.6f)\n",
-                    variable, oldUb, value, currentLb );
             _dependencyAnalyzer->notifyUpperBoundUpdate( variable, oldUb, value );
         }
 

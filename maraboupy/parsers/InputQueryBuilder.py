@@ -181,6 +181,9 @@ class InputQueryBuilder(ABC):
         self.incremental_input_lbs = lbs
         self.incremental_input_ubs = ubs
 
+        diffs = ubs - lbs
+        assert np.all(diffs >= 1e-9), "Some input lower bounds exceed upper bounds"
+
         # Optionally encode the shared disjunction (negated robustness)
         if targetLabel is not None:
             flat_outputs = []
@@ -216,6 +219,7 @@ class InputQueryBuilder(ABC):
         print(
             f"[DEBUG] addRobustnessBatch: n_points={num_points}, "
             f"epsilons=[min={epsilons.min():.3g}, max={epsilons.max():.3g}], "
+            f"diff=[min={diffs.min():.3g}, max={diffs.max():.3g}], "
             f"targetLabel={targetLabel}, margin={-margin}, "
             f"[min/max]=[{np.min(self.incremental_input_min):.3g},"
             f"{np.max(self.incremental_input_max):.3g}]"
@@ -490,8 +494,8 @@ class InputQueryBuilder(ABC):
             ipq.setUpperBound(u, self.upperBounds[u])
 
         if self.incremental_mode:
-            print(f"[DEBUG] Building InputQuery in incremental mode with {len(self.incremental_input_lbs)} points")
             # TODO: Pass points and epsilon to ipq once C++ side supports it
+            pass
 
         return ipq
 

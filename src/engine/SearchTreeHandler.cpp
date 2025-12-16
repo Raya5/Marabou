@@ -133,9 +133,9 @@ void SearchTreeHandler::performSplit()
 {
     ASSERT( _needToSplit );
 
-    String split_info;
-    _constraintForSplitting->dump(split_info);
-    printf("Split Info: %s", split_info.ascii());
+    // String split_info;
+    // _constraintForSplitting->dump(split_info);
+    // printf("Split Info: %s", split_info.ascii());
 
 
     _numRejectedPhasePatternProposal = 0;
