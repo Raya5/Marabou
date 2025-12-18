@@ -195,22 +195,6 @@ bool Engine::solve( double timeoutInSeconds )
     SignalHandler::getInstance()->initialize();
     SignalHandler::getInstance()->registerClient( this );
 
-    // --- incremental ---
-    if ( _incrementalMode ) {
-        ASSERT( _dependencyAnalyzer );
-        ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
-        _dependencyAnalyzer->setContext( &_context);
-        _dependencyAnalyzer->setPreprocessor( &_preprocessor);
-
-       // Sync DA with Engine's preprocessed query
-       ASSERT( _preprocessedQuery );
-       _dependencyAnalyzer->syncWithEnginePreprocessedQuery( *_preprocessedQuery );
-
-        _boundManager.setDependencyAnalyzer( _dependencyAnalyzer );
-    } else if ( Options::get()->getBool( Options::INCREMENTAL_MODE ) ) {
-        printf( "[Engine] Incremental mode enabled (no analyzer attached)\n" );
-    }
-
     // Register the boundManager with all the PL constraints
     for ( auto &plConstraint : _plConstraints )
         plConstraint->registerBoundManager( &_boundManager );
@@ -243,6 +227,26 @@ bool Engine::solve( double timeoutInSeconds )
         printf( "\nEngine::solve: Initial statistics\n" );
         _statistics.print();
         printf( "\n---\n" );
+    }
+
+
+    // --- incremental ---
+    if ( _incrementalMode ) {
+        ASSERT( _dependencyAnalyzer );
+        ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
+        _dependencyAnalyzer->setCurrentPreprocessedQuery( *_preprocessedQuery );
+        _dependencyAnalyzer->setCurrentNetworkLevelReasoner( _networkLevelReasoner );
+        _dependencyAnalyzer->setContext( &_context);
+        _dependencyAnalyzer->setPreprocessor( &_preprocessor);
+
+
+       // Sync DA with Engine's preprocessed query
+       ASSERT( _preprocessedQuery );
+       _dependencyAnalyzer->syncWithEnginePreprocessedQuery( *_preprocessedQuery );
+
+        _boundManager.setDependencyAnalyzer( _dependencyAnalyzer );
+    } else if ( Options::get()->getBool( Options::INCREMENTAL_MODE ) ) {
+        printf( "[Engine] Incremental mode enabled (no analyzer attached)\n" );
     }
 
     bool splitJustPerformed = true;
@@ -4129,6 +4133,15 @@ void Engine::applyDependencyAnalyzerTightenings()
     ASSERT( _lpSolverType == LPSolverType::NATIVE || _lpSolverType == LPSolverType::GUROBI );
     ASSERT( !_produceUNSATProofs ); // incremental and UNSAT proofs assumed mutually exclusive
 
+    _dependencyRequestsCounter++;
+
+    if ( _dependencyRequestsCounter < 2 )
+    {
+        return;
+    }
+    bool calculateDependencies =  _dependencyRequestsCounter == 2;
+
+
     /*
       Ask the DependencyAnalyzer for implied tightenings.
 
@@ -4141,15 +4154,16 @@ void Engine::applyDependencyAnalyzerTightenings()
       around for debugging / comparison and can be re-enabled if needed.
     */
     List<Tightening> tightenings;
-    _dependencyAnalyzer->getImpliedTighteningsFromSat( tightenings );
-
+    _dependencyAnalyzer->getImpliedTighteningsFromSat( tightenings, calculateDependencies );
+    printf("Called getImpliedTighteningsFromSat with calculateDependencies=%u because _dependencyRequestsCounter is %u\n",
+           calculateDependencies, _dependencyRequestsCounter);
+    printf( "[Engine][IV] applyDependencyAnalyzerTightenings: %u tightenings\n",
+            tightenings.size() );
+            
     if ( tightenings.empty() )
     {
         return;
     }
-
-    printf( "[Engine][IV] applyDependencyAnalyzerTightenings: %u tightenings\n",
-            tightenings.size() );
 
     for ( const auto &tightening : tightenings )
     {

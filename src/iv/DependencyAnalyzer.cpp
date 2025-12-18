@@ -21,6 +21,12 @@
 #include <unordered_set>
 #include <algorithm>
 #include <chrono>
+#include <unordered_map>
+#include <cstdint>
+
+#include <cmath>
+#include <vector>
+#include <cstdio>
 
 #ifdef ENABLE_GUROBI
 #include "GurobiWrapper.h"
@@ -54,6 +60,8 @@ DependencyAnalyzer::DependencyAnalyzer( const InputQuery *baseIpq,
     // These are injected later from Engine
     _context = nullptr;
     _preprocessor = nullptr;
+    _currPreprocessedQuery = nullptr;
+    _currNetworkLevelReasoner = nullptr;   
     _seenPhase = nullptr;
 
     // Preprocess the base query and cache its NLR
@@ -107,9 +115,18 @@ void DependencyAnalyzer::setContext( CVC4::context::Context *ctx )
     (void)runBoundTightening();
 
     // Compute dependencies (nogoods) based on the tightened bounds
-    computeSameLayerDependencies();
+    // computeSameLayerDependencies();
 
-    // Rebuild dependency runtime state objects under the new context
+    rebuildDependencyRuntimeStates();
+
+    // Track seen ReLU phases in a context-dependent map (backtrackable)
+    _seenPhase =
+        new (true) CVC4::context::CDHashMap<unsigned, ReLURuntimeState, std::hash<unsigned>>( _context );
+}
+
+void DependencyAnalyzer::rebuildDependencyRuntimeStates()
+{
+    // Rebuild dependency runtime state objects under the current context
     _dependencyStates.clear();
     _dependencyStates.reserve( _dependencies.size() );
 
@@ -120,11 +137,8 @@ void DependencyAnalyzer::setContext( CVC4::context::Context *ctx )
     }
 
     ASSERT( _dependencyStates.size() == _dependencies.size() );
-
-    // Track seen ReLU phases in a context-dependent map (backtrackable)
-    _seenPhase =
-        new (true) CVC4::context::CDHashMap<unsigned, ReLURuntimeState, std::hash<unsigned>>( _context );
 }
+
 
 void DependencyAnalyzer::setPreprocessor( Preprocessor *preprocessor )
 {
@@ -132,10 +146,23 @@ void DependencyAnalyzer::setPreprocessor( Preprocessor *preprocessor )
     _preprocessor = preprocessor;
 }
 
+void DependencyAnalyzer::setCurrentPreprocessedQuery( const Query &enginePreprocessedQuery )
+{
+    // Make an owned copy (so DA is not tied to Engine's lifetime/mutations)
+    _currPreprocessedQuery = std::make_unique<Query>( enginePreprocessedQuery );
+}
+
+const Query *DependencyAnalyzer::getCurrentPreprocessedQuery() const
+{
+    return _currPreprocessedQuery.get();
+}
+
+
 unsigned DependencyAnalyzer::computeSameLayerDependencies()
 {
     // Scan all layers and compute dependencies only for WEIGHTED_SUM layers
     ASSERT( _networkLevelReasoner );
+    printf("[Debug] Computing same-layer dependencies...\n");
 
     const unsigned numLayers = _networkLevelReasoner->getNumberOfLayers();
     unsigned totalAdded = 0;
@@ -152,6 +179,7 @@ unsigned DependencyAnalyzer::computeSameLayerDependencies()
             totalAdded += computeSameLayerDependencies( layerIndex );
     }
 
+    printf("[Debug] Computed %u same-layer dependencies.\n", totalAdded );
     return totalAdded;
 }
 
@@ -224,37 +252,43 @@ unsigned DependencyAnalyzer::_applyTighteningsToPreprocessedQuery( const List<Ti
 }
 
 void DependencyAnalyzer::collectUnstableNeurons( unsigned layerIndex,
+                                                bool currQuery,
                                                 std::vector<unsigned> &unstableNeurons ) const
 {
     // Collect neuron indices in this layer whose pre-activation interval crosses 0
     unstableNeurons.clear();
+    const Query *query = currQuery ? _currPreprocessedQuery.get() : _preprocessedQuery.get();
+    ASSERT( query );
 
-    if ( !_networkLevelReasoner )
-        return;
+    const NLR::NetworkLevelReasoner *networkLevelReasoner = currQuery ? _currNetworkLevelReasoner : _networkLevelReasoner;
+    if ( !networkLevelReasoner )
+        ASSERT( false && "NLR is null in collectUnstableNeurons" );
 
-    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( layerIndex );
+    const NLR::Layer *weightedSumLayer = networkLevelReasoner->getLayer( layerIndex );
     if ( !weightedSumLayer )
-        return;
+        ASSERT( false && "Layer is null in collectUnstableNeurons" );
 
     const unsigned numNeurons = weightedSumLayer->getSize();
-
     for ( unsigned neuronIndex = 0; neuronIndex < numNeurons; ++neuronIndex )
     {
-        const double lowerPreActivation = weightedSumLayer->getLb( neuronIndex );
-        const double upperPreActivation = weightedSumLayer->getUb( neuronIndex );
 
         // Consistency check: NLR bounds should match query bounds (kept as ASSERT)
         const unsigned var = weightedSumLayer->neuronToVariable( neuronIndex );
         const double nlrLb = weightedSumLayer->getLb( neuronIndex );
-        const double pqLb  = _preprocessedQuery->getLowerBound( var );
+        const double pqLb  = query->getLowerBound( var );
         const double nlrUb = weightedSumLayer->getUb( neuronIndex );
-        const double pqUb  = _preprocessedQuery->getUpperBound( var );
+        const double pqUb  = query->getUpperBound( var );
 
-        if ( !FloatUtils::areEqual( nlrLb, pqLb, 1e-9 ) ||
-             !FloatUtils::areEqual( nlrUb, pqUb, 1e-9 ) )
+        if ( FloatUtils::lt( nlrLb, pqLb ) ||
+             FloatUtils::gt( nlrUb, pqUb ) )
         {
+            printf( "[DA][Warning] NLR/query bound mismatch for var %u: NLR=[%g,%g], PQ=[%g,%g]\n",
+                    var, nlrLb, nlrUb, pqLb, pqUb );
             ASSERT( false );
         }
+
+        const double lowerPreActivation = nlrLb;
+        const double upperPreActivation = nlrUb;
 
         // Unstable means: can be negative or positive depending on input
         if ( lowerPreActivation < 0.0 && upperPreActivation > 0.0 )
@@ -277,11 +311,25 @@ unsigned DependencyAnalyzer::computeSameLayerDependencies( unsigned weightedSumL
         return 0;
 
     std::vector<unsigned> unstable;
-    collectUnstableNeurons( weightedSumLayerIndex, unstable );
+    collectUnstableNeurons( weightedSumLayerIndex, true, unstable);
+    const unsigned before = unstable.size();
+    // _pruneUnstableByTopKWithRecency( weightedSumLayerIndex,
+    //                                 unstable,
+    //                                 /*fractionToKeep=*/0.25,
+    //                                 /*minK=*/16,
+    //                                 /*maxK=*/32 );
+    const unsigned after = unstable.size();
+
+    printf( "[DA][score] layer=%u unstable before=%u after=%u\n",
+            weightedSumLayerIndex, before, after );
+
 
     // Need at least 2 vars to form a dependency
     if ( unstable.size() < 2 )
         return 0;
+    
+    // Sort for consistent ordering
+    std::sort( unstable.begin(), unstable.end() );
 
     unsigned addedPairs   = 0;
     unsigned addedTriples = 0;
@@ -587,6 +635,7 @@ bool DependencyAnalyzer::recordConflict( Dependency d )
     ASSERT( d.getVars().size() == d.getStates().size() );
 
     const std::vector<unsigned> &vars = d.getVars();
+    const std::vector<ReLUState> &states = d.getStates();
 
     // Require canonical ordering
     for ( size_t i = 1; i < vars.size(); ++i )
@@ -597,6 +646,14 @@ bool DependencyAnalyzer::recordConflict( Dependency d )
 
     // Add to permanent storage
     const DependencyState::DependencyId id = _addDependency( d );
+    printf( "[DA] Recorded new dependency id=%u vars=", id );
+    for ( unsigned i = 0; i < states.size(); ++i )
+    {
+        const unsigned v = vars[i];
+        const ReLUState s = states[i];
+        printf( "%u (%s) ",v , ( s == ReLUState::Active ? "A" : "I" ) );
+    }
+    printf( "\n" ); 
 
     // If context exists, also add a backtrackable runtime-state object
     if ( _context )
@@ -871,6 +928,21 @@ void DependencyAnalyzer::_sliceMinMax_givenMEqZero_LP( const Vector<double> &w_t
 
 bool DependencyAnalyzer::notifyNeuronFixed( unsigned newVar, ReLUState state )
 {
+    return notifyNeuronFixed( newVar, state, true );
+}
+
+void DependencyAnalyzer::notifyLowerBoundUpdate( unsigned newVar, double oldLb, double newLb )
+{
+    return notifyLowerBoundUpdate( newVar, oldLb, newLb, true );
+}
+
+void DependencyAnalyzer::notifyUpperBoundUpdate( unsigned newVar, double oldUb, double newUb )
+{
+    return notifyUpperBoundUpdate( newVar, oldUb, newUb, true );
+}
+
+bool DependencyAnalyzer::notifyNeuronFixed( unsigned newVar, ReLUState state, bool countForScore)
+{
     // Called by Engine when a pre-activation bound crosses 0 (or hits exactly 0 edge cases).
     ASSERT( _seenPhase );
     ASSERT( _preprocessor );
@@ -915,12 +987,26 @@ bool DependencyAnalyzer::notifyNeuronFixed( unsigned newVar, ReLUState state )
     ASSERT( ait == _seenPhase->end() || ( *ait ).second == opposite );
 
     _seenPhase->insert( var, incoming );
+
+    // Bump score for unstable vars
+    if ( countForScore && _isUnstableVar( var ) )
+    {
+        _markFixedNow( var );
+        _bumpScore( var );
+    }
+    else
+    {
+        // Stable vars do not contribute to score
+        // printf( "[DA][score] skipping stable var %u for score bump\n", var );
+    }
+
     return true;
 }
 
 void DependencyAnalyzer::notifyLowerBoundUpdate( unsigned newVar,
                                                 double previousLowerBound,
-                                                double newLowerBound )
+                                                double newLowerBound,
+                                                bool countForScore)
 {
     // Lower bounds must only tighten upward
     ASSERT( _preprocessor );
@@ -931,12 +1017,13 @@ void DependencyAnalyzer::notifyLowerBoundUpdate( unsigned newVar,
 
     // Crossed 0 from below => neuron is guaranteed Active
     if ( previousLowerBound < 0.0 && newLowerBound >= 0.0 )
-        notifyNeuronFixed( newVar, ReLUState::Active );
+        notifyNeuronFixed( newVar, ReLUState::Active, countForScore);
 }
 
 void DependencyAnalyzer::notifyUpperBoundUpdate( unsigned newVar,
                                                 double previousUpperBound,
-                                                double newUpperBound )
+                                                double newUpperBound,
+                                                bool countForScore )
 {
     // Upper bounds must only tighten downward
     ASSERT( _preprocessor );
@@ -947,7 +1034,7 @@ void DependencyAnalyzer::notifyUpperBoundUpdate( unsigned newVar,
 
     // Crossed 0 from above => neuron is guaranteed Inactive
     if ( previousUpperBound > 0.0 && newUpperBound <= 0.0 )
-        notifyNeuronFixed( newVar, ReLUState::Inactive );
+        notifyNeuronFixed( newVar, ReLUState::Inactive, countForScore);
 }
 
 DependencyState::DependencyId DependencyAnalyzer::_addDependency( const Dependency &d )
@@ -991,6 +1078,65 @@ void DependencyAnalyzer::_computeCoveringBoxFromRemainingQueries()
         _currentLb[x] = lb;
         _currentUb[x] = ub;
     }
+
+    // --------------------
+    // Stats on box widths
+    // --------------------
+    double minDiff = +INFINITY;
+    double maxDiff = -INFINITY;
+    double sumDiff = 0.0;
+
+    std::vector<double> diffs;
+    diffs.reserve( _inputDim );
+
+    for ( unsigned x = 0; x < _inputDim; ++x )
+    {
+        const double diff = _currentUb[x] - _currentLb[x];
+
+        // If you want to sanity-check:
+        // ASSERT( diff >= 0.0 );
+
+        diffs.push_back( diff );
+        sumDiff += diff;
+        minDiff = std::min( minDiff, diff );
+        maxDiff = std::max( maxDiff, diff );
+    }
+
+    const double meanDiff = sumDiff / _inputDim;
+
+    // Median
+    std::sort( diffs.begin(), diffs.end() );
+    double medianDiff;
+    if ( _inputDim % 2 == 0 )
+    {
+        medianDiff = 0.5 * ( diffs[_inputDim / 2 - 1] +
+                            diffs[_inputDim / 2] );
+    }
+    else
+    {
+        medianDiff = diffs[_inputDim / 2];
+    }
+
+    // Standard deviation
+    double var = 0.0;
+    for ( double d : diffs )
+        var += ( d - meanDiff ) * ( d - meanDiff );
+    var /= _inputDim;
+
+    const double stdDiff = std::sqrt( var );
+
+    // Print
+    printf(
+        "[DA] CoveringBox stats (dims=%u): "
+        "diff[min=%.6g, max=%.6g, mean=%.6g, median=%.6g, std=%.6g]\n",
+        _inputDim,
+        minDiff,
+        maxDiff,
+        meanDiff,
+        medianDiff,
+        stdDiff
+    );
+
 }
 
 bool DependencyAnalyzer::_isSubset( const Vector<double> &lbNew,
@@ -1091,7 +1237,7 @@ void DependencyAnalyzer::_collectAllUnstableNeurons()
         if ( layer->getLayerType() == NLR::Layer::WEIGHTED_SUM )
         {
             std::vector<unsigned> unstableIndices;
-            collectUnstableNeurons( layerIndex, unstableIndices );
+            collectUnstableNeurons( layerIndex, false, unstableIndices);
 
             // Convert neuron indices to old-variable ids
             for ( unsigned neuronIndex : unstableIndices )
@@ -1136,9 +1282,9 @@ void DependencyAnalyzer::syncWithEnginePreprocessedQuery( const Query &engineQue
 
         // If already guaranteed Active / Inactive, notify using a sentinel "previous" bound
         if ( !FloatUtils::lt( lb, 0.0 ) )
-            notifyLowerBoundUpdate( var, -INFINITY, lb );
+            notifyLowerBoundUpdate( var, -INFINITY, lb, false );
         else if ( !FloatUtils::gt( ub, 0.0 ) )
-            notifyUpperBoundUpdate( var, +INFINITY, ub );
+            notifyUpperBoundUpdate( var, +INFINITY, ub, false );
     }
 }
 
@@ -1271,8 +1417,13 @@ void DependencyAnalyzer::_emitTighteningsForImpliedPhase( unsigned reluVar,
     }
 }
 
-void DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tightenings )
+void DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tightenings, bool calculateDependencies )
 {
+    if ( calculateDependencies )
+    {
+            computeSameLayerDependencies();
+    }
+
     // Propagate current assumptions in CaDiCaL and convert entailed literals to tightenings.
     // (CNF dumping is disabled inside debugPrintSatClauses()).
     debugPrintSatClauses();
@@ -1335,6 +1486,120 @@ void DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tighten
         _emitTighteningsForImpliedPhase( reluVar, impliedPhase, tightenings );
     }
 }
+
+void DependencyAnalyzer::_markFixedNow( unsigned oldVar )
+{
+    ++_fixCounter;
+    _unstableNeuronLastFixed[oldVar] = _fixCounter;
+}
+
+void DependencyAnalyzer::_bumpScore( unsigned oldVar )
+{
+    // simplest: +1 per fix event
+    _unstableNeuronScores[oldVar] += 1.0;
+    // printf("[Debug][score] Bumping score for unstable var %u to %.4f\n", oldVar, _unstableNeuronScores[oldVar]);
+}
+
+
+double DependencyAnalyzer::_getScore( unsigned oldVar ) const
+{
+    auto it = _unstableNeuronScores.find( oldVar );
+    return it == _unstableNeuronScores.end() ? 0.0 : it->second;
+}
+
+void DependencyAnalyzer::_pruneUnstableByTopKWithRecency( unsigned weightedSumLayerIndex,
+                                                         std::vector<unsigned> &unstable,
+                                                         double fractionToKeep,
+                                                         unsigned minK,
+                                                         unsigned maxK ) const
+{
+    const NLR::Layer *weightedSumLayer = _networkLevelReasoner->getLayer( weightedSumLayerIndex );
+    if ( !weightedSumLayer )
+        return;
+
+    // Build candidates: only those with score > 0
+    struct Cand
+    {
+        unsigned neuronIndex;
+        unsigned oldVar;
+        double score;
+        uint64_t lastFixed;
+    };
+
+    // Reserve pessimistically (same as unstable size)
+    std::vector<Cand> cands;
+    cands.reserve( unstable.size() );
+
+    for ( unsigned neuronIndex : unstable )
+    {
+        const unsigned var    = weightedSumLayer->neuronToVariable( neuronIndex );
+        const unsigned oldVar = _baseIpqPreprocessor.getOldIndex( var );
+
+        auto sit = _unstableNeuronScores.find( oldVar );
+        if ( sit == _unstableNeuronScores.end() )
+            continue;
+
+        const double s = sit->second;
+        if ( s <= 0.0 )
+            continue;
+
+        uint64_t lf = 0;
+        auto lit = _unstableNeuronLastFixed.find( oldVar );
+        if ( lit != _unstableNeuronLastFixed.end() )
+            lf = lit->second;
+
+        cands.push_back( { neuronIndex, oldVar, s, lf } );
+    }
+
+    // If nobody has score>0 yet => prune everything (so no deps initially)
+    if ( cands.empty() )
+    {
+        unstable.clear();
+        return;
+    }
+
+    // Decide K based on scored count
+    unsigned K = (unsigned)std::ceil( fractionToKeep * (double)cands.size() );
+    if ( K < minK ) K = minK;
+    if ( K > maxK ) K = maxK;
+    if ( K > cands.size() ) K = cands.size();
+
+    if ( cands.size() <= minK )
+    {
+        // Keep all scored candidates (still need to rewrite `unstable`)
+        unstable.clear();
+        unstable.reserve( cands.size() );
+        for ( const auto &c : cands )
+            unstable.push_back( c.neuronIndex );
+        return;
+    }
+
+    // Comparator: higher score first; tie -> more recent; tie -> smaller oldVar (deterministic)
+    auto better = []( const Cand &a, const Cand &b ) {
+        if ( a.score != b.score ) return a.score > b.score;
+        if ( a.lastFixed != b.lastFixed ) return a.lastFixed > b.lastFixed;
+        return a.oldVar < b.oldVar;
+    };
+
+    // Partition so that first K are the best K (O(n))
+    std::nth_element( cands.begin(), cands.begin() + K, cands.end(), better );
+    cands.resize( K );
+
+    // Optional: make selection order deterministic (sort only K items, cheap)
+    std::sort( cands.begin(), cands.end(), better );
+
+    unstable.clear();
+    unstable.reserve( K );
+    for ( const auto &c : cands )
+        unstable.push_back( c.neuronIndex );
+}
+
+void DependencyAnalyzer::setCurrentNetworkLevelReasoner( NLR::NetworkLevelReasoner *nlr )
+{
+    _currNetworkLevelReasoner = nlr;
+}
+
+
 
 void DependencyAnalyzer::debugPrintSatClauses()
 {

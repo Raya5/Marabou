@@ -31,7 +31,8 @@
 #include "Preprocessor.h"
 #include "cadical.hpp"
 #include <boost/dynamic_bitset.hpp>
-
+#include <unordered_map>
+#include <cstdint>
 
 // #include <memory>
 
@@ -80,6 +81,15 @@ public:
     void setPreprocessor( Preprocessor *preprocessor );
 
     /*
+      TODO
+    */
+    void setCurrentPreprocessedQuery( const Query &enginePreprocessedQuery );
+    const Query *getCurrentPreprocessedQuery() const;
+    void setCurrentNetworkLevelReasoner( NLR::NetworkLevelReasoner *nlr );
+
+
+
+    /*
       Accessor for the stored base InputQuery pointer (may be nullptr).
       Intended for internal/diagnostic use only.
     */
@@ -99,7 +109,7 @@ public:
     /*
       Gather unstable neurons of the given weighted-sum layer from NLR pre-activation bounds
     */
-    void collectUnstableNeurons( unsigned layerIndex, std::vector<unsigned> &unstableNeurons ) const;
+    void collectUnstableNeurons( unsigned layerIndex, bool currQuery, std::vector<unsigned> &unstableNeurons ) const;
 
     /*
       Compute size-2 dependencies (as conflicts) for a given WEIGHTED_SUM layer index.
@@ -207,7 +217,12 @@ public:
       This updates the runtime state for all dependencies that include
       the literal (var = state). It does not yet trigger propagation.
     */
+    // Default behavior: counts towards scoring
     bool notifyNeuronFixed( unsigned newVar, ReLUState state );
+
+    // Explicit control (used by syncWithEnginePreprocessedQuery)
+    bool notifyNeuronFixed( unsigned newVar, ReLUState state, bool countForScore );
+
 
     /*
       Notify the DependencyAnalyzer that the lower bound of a pre-activation variable
@@ -217,6 +232,10 @@ public:
     void notifyLowerBoundUpdate( unsigned newVar,
                                 double previousLowerBound,
                                 double newLowerBound );
+    void notifyLowerBoundUpdate( unsigned newVar,
+                                double previousLowerBound,
+                                double newLowerBound,
+                                bool countForScore );
 
     /*
       Notify the DependencyAnalyzer that the upper bound of a pre-activation variable
@@ -226,6 +245,10 @@ public:
     void notifyUpperBoundUpdate( unsigned newVar,
                                 double previousUpperBound,
                                 double newUpperBound );
+    void notifyUpperBoundUpdate( unsigned newVar,
+                                double previousUpperBound,
+                                double newUpperBound,
+                                bool countForScore );
     /*
         Advance the analyzer to the next query in the schedule.
 
@@ -258,7 +281,7 @@ public:
       in _seenPhase to compute implied ReLU phases, and convert them
       into tightenings.
     */
-    void getImpliedTighteningsFromSat( List<Tightening> &tightenings );
+    void getImpliedTighteningsFromSat( List<Tightening> &tightenings, bool calculateDependencies );
 
     // Debug helper: dump all clauses currently stored in the CaDiCaL solver
     // in DIMACS format to stdout.
@@ -315,6 +338,8 @@ private:
       Preprocessed Query (owns the NLR); created in the .cpp
     */
     std::unique_ptr<Query> _preprocessedQuery;
+    std::unique_ptr<Query> _currPreprocessedQuery;
+    NLR::NetworkLevelReasoner *_currNetworkLevelReasoner;
 
     /*
       Cached raw pointer to the NLR owned by _preprocessedQuery.
@@ -344,6 +369,8 @@ private:
 
     // Set once after preprocessing (e.g. in buildFromBase or setContext)
     unsigned _bitmaskSize = 0;
+
+    void rebuildDependencyRuntimeStates();
 
     // --- Helper functions ---
 
@@ -476,6 +503,30 @@ private:
       If the ReLU is not present in _seenPhase, we treat it as Unstable/Unknown.
     */
     ReLURuntimeState _getReluPhase( unsigned reluVar ) const;
+
+    // --- Scoring / selection of unstable neurons (old var ids) ---
+    std::unordered_map<unsigned, double> _unstableNeuronScores;
+
+    // Recency: last time (monotone counter) this ReLU was fixed
+    std::unordered_map<unsigned, uint64_t> _unstableNeuronLastFixed;
+    uint64_t _fixCounter = 0;
+
+    // Return score for oldVar (0 if unseen).
+    double _getScore( unsigned oldVar ) const;
+
+    // Increment score for oldVar by 1 (or any weight you choose).
+    void _bumpScore( unsigned oldVar );
+
+    // Record that oldVar was just fixed "now" (updates lastFixed counter).
+    void _markFixedNow( unsigned oldVar );
+
+    // Prune `unstable` (neuron indices within the given weighted-sum layer) to a
+    // bounded top-K subset, ranking by (score DESC, lastFixed DESC, oldVar ASC).
+    void _pruneUnstableByTopKWithRecency( unsigned weightedSumLayerIndex,
+                                         std::vector<unsigned> &unstable,
+                                         double fractionToKeep,
+                                         unsigned minK,
+                                         unsigned maxK ) const;
 
 
 
