@@ -927,6 +927,8 @@ PYBIND11_MODULE( MarabouCore, m )
         .value( "MAX_DECISION_LEVEL", Statistics::StatisticsUnsignedAttribute::MAX_DECISION_LEVEL )
         .value( "NUM_ACTIVE_PL_CONSTRAINTS",
                 Statistics::StatisticsUnsignedAttribute::NUM_ACTIVE_PL_CONSTRAINTS )
+        .value( "NUM_INCREMENTAL_TIGHTENINGS",
+                Statistics::StatisticsUnsignedAttribute::NUM_INCREMENTAL_TIGHTENINGS )
         .export_values();
     py::enum_<Statistics::StatisticsLongAttribute>( m, "StatisticsLongAttribute" )
         .value( "NUM_TIGHTENINGS_FROM_EXPLICIT_BASIS",

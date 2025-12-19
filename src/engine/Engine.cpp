@@ -34,6 +34,7 @@
 #include "Vector.h"
 // --- incremental ---
 #include "DependencyAnalyzer.h"
+#include "Dependency.h"
 
 #include <random>
 
@@ -451,6 +452,12 @@ bool Engine::solve( double timeoutInSeconds )
             if ( _produceUNSATProofs )
                 explainSimplexFailure();
 
+            if ( _incrementalMode )
+            {
+                // ASSERT( _searchTreeHandler.getStackDepth() > 0 ||
+                //        _searchTreeHandler.getImpliedValidSplitsAtRoot().size() > 0 );
+                recordConflictFromCurrentDecisions();
+            }
             if ( !_searchTreeHandler.popSplit() )
             {
                 mainLoopEnd = TimeUtils::sampleMicro();
@@ -3031,6 +3038,35 @@ bool Engine::restoreSearchTreeState( SearchTreeState &searchTreeState )
         if ( _produceUNSATProofs )
             explainSimplexFailure();
 
+        // --- BEGIN: print decision trail for UNSAT leaf ---
+        {
+            ASSERT(false); // Not implementing incremental / dependecies here yet.
+            List<PiecewiseLinearCaseSplit> splits;
+            _searchTreeHandler.allDecisionSplitsSoFar( splits );
+
+            printf( "\n[UNSAT LEAF *OTHER ONE*] Decision trail (%u splits):\n",
+                    splits.size() );
+
+            unsigned idx = 0;
+            for ( const auto &split : splits )
+            {
+                printf( "  [%u] ", idx++ );
+
+                // Option 1: lightweight summary
+                printf( "bounds=%u, equations=%u\n",
+                        split.getBoundTightenings().size(),
+                        split.getEquations().size() );
+
+                // Option 2 (optional, verbose): full dump
+                // String dump;
+                // split.dump( dump );
+                // printf( "%s\n", dump.ascii() );
+            }
+
+            printf( "[END UNSAT TRAIL]\n\n" );
+        }
+        // --- END: print decision trail ---
+
         if ( !_searchTreeHandler.popSplit() )
         {
             if ( _verbosity > 0 )
@@ -4135,11 +4171,11 @@ void Engine::applyDependencyAnalyzerTightenings()
 
     _dependencyRequestsCounter++;
 
-    if ( _dependencyRequestsCounter < 2 )
-    {
-        return;
-    }
-    bool calculateDependencies =  _dependencyRequestsCounter == 2;
+    // if ( _dependencyRequestsCounter < 2 )
+    // {
+    //     return;
+    // }
+    // bool calculateDependencies =  _dependencyRequestsCounter == 2;
 
 
     /*
@@ -4154,9 +4190,14 @@ void Engine::applyDependencyAnalyzerTightenings()
       around for debugging / comparison and can be re-enabled if needed.
     */
     List<Tightening> tightenings;
-    _dependencyAnalyzer->getImpliedTighteningsFromSat( tightenings, calculateDependencies );
-    printf("Called getImpliedTighteningsFromSat with calculateDependencies=%u because _dependencyRequestsCounter is %u\n",
-           calculateDependencies, _dependencyRequestsCounter);
+    bool noConflict = _dependencyAnalyzer->getImpliedTighteningsFromSat( tightenings, false );
+    // printf("Called getImpliedTighteningsFromSat with calculateDependencies=%u because _dependencyRequestsCounter is %u\n",
+    //        calculateDependencies, _dependencyRequestsCounter);
+    if ( !noConflict )
+    {
+        printf( "[Engine][IV] applyDependencyAnalyzerTightenings: detected conflict from DA\n" );
+        throw InfeasibleQueryException();
+    }
     printf( "[Engine][IV] applyDependencyAnalyzerTightenings: %u tightenings\n",
             tightenings.size() );
             
@@ -4164,6 +4205,8 @@ void Engine::applyDependencyAnalyzerTightenings()
     {
         return;
     }
+    _statistics.incUnsignedAttribute( Statistics::NUM_INCREMENTAL_TIGHTENINGS,
+                                  tightenings.size() );
 
     for ( const auto &tightening : tightenings )
     {
@@ -4178,8 +4221,9 @@ void Engine::applyDependencyAnalyzerTightenings()
             const double newLb = tightening._value;
 
             // Safety: new LB must not exceed current UB
-            ASSERT( !FloatUtils::gt( newLb, currentUb ) );
+            // ASSERT( !FloatUtils::gt( newLb, currentUb ) ); // Can heppen, means unsat query
             // The analyzer should not emit strictly worse LBs
+            // printf( "Tightening LB of x%u from %.6f to %.6f\n", engineVar, currentLb, newLb );
             ASSERT( !FloatUtils::lt( newLb, currentLb ) );
 
             _boundManager.tightenLowerBound( tableauVar, newLb );
@@ -4190,7 +4234,7 @@ void Engine::applyDependencyAnalyzerTightenings()
             const double newUb = tightening._value;
 
             // Safety: new UB must not go below current LB
-            ASSERT( !FloatUtils::lt( newUb, currentLb ) );
+            // ASSERT( !FloatUtils::lt( newUb, currentLb ) ); // Can heppen, means unsat query
             // The analyzer should not emit strictly worse UBs
             ASSERT( !FloatUtils::gt( newUb, currentUb ) );
 
@@ -4204,3 +4248,102 @@ void Engine::applyDependencyAnalyzerTightenings()
         }
     }
 }
+
+void Engine::recordConflictFromCurrentDecisions()
+{
+    const unsigned depth = _searchTreeHandler.getStackDepth();
+    printf( "[Engine][IV] recordConflictFromCurrentDecisions at depth %u\n", depth );
+
+    List<PiecewiseLinearCaseSplit> decisions;
+    _searchTreeHandler.allDecisionSplitsSoFar( decisions );
+
+    // One decision per stack frame
+    ASSERT( decisions.size() == depth );
+
+    std::vector<unsigned> vars;
+    std::vector<ReLUState> states;
+    vars.reserve( decisions.size() );
+    states.reserve( decisions.size() );
+
+    printf( "\n[UNSAT LEAF] Decision trail (%u decisions):\n", decisions.size() );
+
+    unsigned idx = 0;
+    for ( const auto &split : decisions )
+    {
+        // --- Structural assertions ---
+        ASSERT( split.getBoundTightenings().size() == 2 );
+        ASSERT( split.getEquations().empty() );
+
+        const auto &bts = split.getBoundTightenings();
+        auto it = bts.begin();
+        const Tightening &t0 = *it++;
+        const Tightening &t1 = *it++;
+
+        // Value invariants (current decision encoding)
+        ASSERT( FloatUtils::areEqual( t0._value, 0.0 ) );
+        ASSERT( FloatUtils::areEqual( t1._value, 0.0 ) );
+
+        // Enforce assumption: t0 is the ReLU variable
+        const unsigned reluVar = t0._variable;
+        ASSERT( reluVar == std::min( t0._variable, t1._variable ) );
+
+        // Phase classification (total, no UNKNOWN)
+        ReLUState st;
+        if ( t0._type == Tightening::UB && t1._type == Tightening::UB )
+        {
+            st = ReLUState::Inactive;
+        }
+        else if ( ( t0._type == Tightening::LB && t1._type == Tightening::UB ) ||
+                  ( t0._type == Tightening::UB && t1._type == Tightening::LB ) )
+        {
+            st = ReLUState::Active;
+        }
+        else
+        {
+            ASSERT( false && "Unexpected decision split pattern" );
+        }
+
+        vars.push_back( reluVar );
+        states.push_back( st );
+
+        // Compact print (decision literal)
+        printf( "  [%u] reluVar=%u  state=%s   "
+                "(x%u %s 0, x%u %s 0)\n",
+                idx++,
+                reluVar,
+                ( st == ReLUState::Active ? "ACTIVE" : "INACTIVE" ),
+                t0._variable, ( t0._type == Tightening::LB ? ">=" : "<=" ),
+                t1._variable, ( t1._type == Tightening::LB ? ">=" : "<=" ) );
+    }
+    std::vector<unsigned> oldVars;
+    oldVars.reserve( decisions.size() );
+    for ( unsigned i = 0; i < vars.size(); ++i )
+    {
+        unsigned oldVar = _preprocessor.getOldIndex( vars[i] );
+        printf( "[Engine][IV] Decision %u: currentVar=%u, beforePreprocessing=%u\n",
+                i, vars[i], oldVar );
+        oldVars.push_back( oldVar );
+    }
+
+    // Build the dependency (not yet added to analyzer)
+    Dependency dep( oldVars, states );
+
+    printf( "[Engine][IV] Built conflict dependency of size %zu\n", dep.size() );
+    for ( size_t i = 0; i < vars.size(); ++i )
+        printf( "    (%u,%s)",
+                vars[i],
+                states[i] == ReLUState::Active ? "A" : "I" );
+
+    printf( "[END UNSAT TRAIL]\n\n" );
+
+    printf( "[Engine][IV] Built conflict using old vars dependency of size %zu\n", dep.size() );
+    for ( size_t i = 0; i < oldVars.size(); ++i )
+        printf( "    (%u,%s)",
+                oldVars[i],
+                states[i] == ReLUState::Active ? "A" : "I" );
+
+    printf( "\n[END UNSAT TRAIL]\n\n" );
+
+    _dependencyAnalyzer->recordConflictIfNew( dep );
+}
+

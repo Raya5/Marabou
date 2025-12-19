@@ -143,6 +143,12 @@ public:
     void allSplitsSoFar( List<PiecewiseLinearCaseSplit> &result ) const;
 
     /*
+      Return a list of all decision splits performed so far (i.e., excluding implied valid splits),
+      in the correct order.
+    */
+    void allDecisionSplitsSoFar( List<PiecewiseLinearCaseSplit> &result ) const;
+
+    /*
       Have the Search Tree handler start reporting statistics.
     */
     void setStatistics( Statistics *statistics );
@@ -181,6 +187,11 @@ public:
     void storeDebuggingSolution( const Map<unsigned, double> &debuggingSolution );
     bool checkSkewFromDebuggingSolution();
     bool splitAllowsStoredSolution( const PiecewiseLinearCaseSplit &split, String &error ) const;
+
+    /*
+      Return a list of all implied valid splits at the root of the search tree.
+    */
+    const List<PiecewiseLinearCaseSplit> &getImpliedValidSplitsAtRoot() const;
 
 private:
     /*

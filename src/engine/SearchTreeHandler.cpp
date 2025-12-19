@@ -420,6 +420,20 @@ void SearchTreeHandler::allSplitsSoFar( List<PiecewiseLinearCaseSplit> &result )
     }
 }
 
+void SearchTreeHandler::allDecisionSplitsSoFar( List<PiecewiseLinearCaseSplit> &result ) const
+{
+    result.clear();
+
+    const unsigned depth = getStackDepth();
+    ASSERT( depth == _stack.size() );
+
+    for ( const auto &it : _stack )
+        result.append( it->_activeSplit );
+
+    ASSERT( result.size() == depth );
+}
+
+
 void SearchTreeHandler::setStatistics( Statistics *statistics )
 {
     _statistics = statistics;
@@ -526,6 +540,11 @@ bool SearchTreeHandler::splitAllowsStoredSolution( const PiecewiseLinearCaseSpli
     }
 
     return true;
+}
+
+const List<PiecewiseLinearCaseSplit> &SearchTreeHandler::getImpliedValidSplitsAtRoot() const
+{
+    return _impliedValidSplitsAtRoot;
 }
 
 PiecewiseLinearConstraint *SearchTreeHandler::chooseViolatedConstraintForFixing(

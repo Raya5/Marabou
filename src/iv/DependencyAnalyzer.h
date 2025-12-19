@@ -131,6 +131,7 @@ public:
       Returns true if the dependency was newly inserted.
     */
     bool recordConflict( Dependency d );
+    bool recordConflictIfNew( Dependency d );
 
     /*
       Extract per-neuron lower and upper bounds from the given layer.
@@ -281,7 +282,7 @@ public:
       in _seenPhase to compute implied ReLU phases, and convert them
       into tightenings.
     */
-    void getImpliedTighteningsFromSat( List<Tightening> &tightenings, bool calculateDependencies );
+    bool getImpliedTighteningsFromSat( List<Tightening> &tightenings, bool calculateDependencies );
 
     // Debug helper: dump all clauses currently stored in the CaDiCaL solver
     // in DIMACS format to stdout.

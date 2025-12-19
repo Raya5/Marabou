@@ -950,6 +950,8 @@ private:
     bool _incrementalMode;
     unsigned _dependencyRequestsCounter;
     std::shared_ptr<DependencyAnalyzer> _dependencyAnalyzer; // null if not incremental
+    void recordConflictFromCurrentDecisions();
+
 
 };
 

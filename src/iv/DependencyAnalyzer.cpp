@@ -598,7 +598,7 @@ void DependencyAnalyzer::addDependenciesTocadical( const Dependency &dep )
     // Encode the dependency as a CNF clause (nogood)
     Vector<int> clauseLits;
     _encodeDependencyToClauseLits( dep, clauseLits );
-    ASSERT( !clauseLits.empty() );
+    // ASSERT( !clauseLits.empty() );
 
     // Push clause into CaDiCaL
     for ( unsigned i = 0; i < clauseLits.size(); ++i )
@@ -616,7 +616,7 @@ void DependencyAnalyzer::_encodeDependencyToClauseLits( const Dependency &dep,
     const auto &states = dep.getStates();
 
     ASSERT( vars.size() == states.size() );
-    ASSERT( !vars.empty() );
+    // ASSERT( !vars.empty() );
 
     for ( unsigned i = 0; i < vars.size(); ++i )
     {
@@ -631,7 +631,9 @@ void DependencyAnalyzer::_encodeDependencyToClauseLits( const Dependency &dep,
 bool DependencyAnalyzer::recordConflict( Dependency d )
 {
     // Record a new dependency and register it with both runtime watchers and SAT.
-    ASSERT( d.size() >= 2 );
+    // ASSERT( d.size() >= 2 );
+    // if ( d.getVars().size() < 1 )
+    //     return false;
     ASSERT( d.getVars().size() == d.getStates().size() );
 
     const std::vector<unsigned> &vars = d.getVars();
@@ -776,6 +778,21 @@ void DependencyAnalyzer::_sliceMinMax_givenOtherZero( const Vector<double> &w_t,
 
     outMin = bestMin;
     outMax = bestMax;
+}
+
+bool DependencyAnalyzer::recordConflictIfNew( Dependency d )
+{
+    // Map NLR neuron indices -> original Marabou variables
+    std::vector<unsigned> vars = d.getVars();
+
+    // Subset pruning: skip if superset of known minimal dependency
+    const Bitmask depMask = _buildDependencySubBitmask( vars );
+    bool issuperset = _isNonMinimalDependency( depMask );
+
+    if ( issuperset )
+        return false;
+
+    return recordConflict( std::move( d ) );
 }
 
 bool DependencyAnalyzer::detectAndRecordConflict( unsigned layerIndex,
@@ -1393,9 +1410,12 @@ void DependencyAnalyzer::_emitTighteningsForImpliedPhase( unsigned reluVar,
         // Active => pre-activation >= 0
         const double newLb = 0.0;
 
-        // Safety: cannot exceed current UB; must strengthen
-        ASSERT( !FloatUtils::gt( newLb, ub ) );
-        ASSERT( FloatUtils::gt( newLb, lb ) );
+        // Safety: cannot exceed current UB; must strengthen - it can, it will be an unsat case
+        // printf("[Debug] newLb=%.6g, lb=%.6g, ub=%.6g\n", newLb, lb, ub);
+        // ASSERT( !FloatUtils::gt( newLb, ub ) );
+        // printf( "[DA] Implied Active ReLU var %u: tightening LB %.6g -> %.6g\n",
+        //         reluVar, lb, newLb );
+        ASSERT( !FloatUtils::lt( newLb, lb ) );
 
         // Engine var id
         const unsigned engineVar = _preprocessor->getNewIndex( reluVar );
@@ -1407,9 +1427,12 @@ void DependencyAnalyzer::_emitTighteningsForImpliedPhase( unsigned reluVar,
         ASSERT( impliedPhase == ReLUState::Inactive );
         const double newUb = 0.0;
 
-        // Safety: cannot go below current LB; must strengthen
-        ASSERT( !FloatUtils::lt( newUb, lb ) );
-        ASSERT( FloatUtils::lt( newUb, ub ) );
+        // Safety: cannot go below current LB; must strengthen - it can, it will be an unsat case
+        // printf( "[DA] Implied Inactive ReLU var %u: tightening UB %.6g -> %.6g\n",
+                // reluVar, ub, newUb );
+        // ASSERT( !FloatUtils::lt( newUb, lb ) );
+        // printf("[Debug] newUb=%.6g, lb=%.6g, ub=%.6g\n", newUb, lb, ub);
+        ASSERT( !FloatUtils::gt( newUb, ub ) );
 
         // Engine var id
         const unsigned engineVar = _preprocessor->getNewIndex( reluVar );
@@ -1417,9 +1440,9 @@ void DependencyAnalyzer::_emitTighteningsForImpliedPhase( unsigned reluVar,
     }
 }
 
-void DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tightenings, bool calculateDependencies )
+bool DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tightenings, bool calculateDependencies )
 {
-    if ( calculateDependencies )
+    if ( calculateDependencies)
     {
             computeSameLayerDependencies();
     }
@@ -1446,8 +1469,9 @@ void DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tighten
 
     // 20 means conflict under assumptions; no implications to emit
     if ( res == 20 )
-        return;
-
+    {
+        return false;
+    }
     // Query entailed literals (implications)
     std::vector<int> implicants;
     _cadical.get_entrailed_literals( implicants );
@@ -1485,6 +1509,7 @@ void DependencyAnalyzer::getImpliedTighteningsFromSat( List<Tightening> &tighten
         // Emit tightening for newly implied phase
         _emitTighteningsForImpliedPhase( reluVar, impliedPhase, tightenings );
     }
+    return true;
 }
 
 void DependencyAnalyzer::_markFixedNow( unsigned oldVar )

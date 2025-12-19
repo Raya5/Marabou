@@ -75,6 +75,9 @@ public:
 
         // 1 if returned UNSAT and proof was certified by proof checker, 0 otherwise.
         CERTIFIED_UNSAT,
+
+        // For incremental solving: number of tightenings
+        NUM_INCREMENTAL_TIGHTENINGS,
     };
 
     enum StatisticsLongAttribute {
