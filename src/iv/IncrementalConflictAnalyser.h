@@ -63,7 +63,7 @@ public:
      * vars / isActiveList:
      *   parallel vectors describing a phase conflict
      */
-    bool addConflict( const std::vector<unsigned> &vars,
+    void addConflict( const std::vector<unsigned> &vars,
                       const std::vector<bool> &isActiveList );
 
     /*
@@ -88,29 +88,7 @@ public:
     * Called once per epsilon solve, right before solving begins.
     * Used for sanity checks and final initialization.
     */
-    void notifySolvingStarted( unsigned numQueryVariables,
-                            const Query *engineQuery,
-                            NLR::NetworkLevelReasoner *nlr,
-                            BoundManager *boundManager );
-
-    void setEngineQuery( const Query *q );
-    void setNetworkLevelReasoner( NLR::NetworkLevelReasoner *nlr );
-    void setBoundManager( BoundManager *bm );
-    bool isNonMinimalDependencyVarsSubMask(const std::vector<unsigned> &vars ) const;
-
-    /*
-    Add a confirmed dependency (vars + forbidden phases) and store it as a conflict.
-
-    - Performs early minimality pruning using VAR-ONLY masks (ignores polarity).
-    - If kept, records the dependency var-mask so future supersets are pruned early.
-    - Then calls addConflict(vars, isActiveList) which stores+encodes into CaDiCaL.
-
-    `vars` are old-var indices, must be same length as `isActiveList`,
-    and should be in canonical sorted order.
-    */
-    void addDependency( const std::vector<unsigned> &vars,
-                        const std::vector<bool> &isActiveList );
-
+    void notifySolvingStarted( unsigned numQueryVariables );
 
     /*
      * End-of-solve notification (optional hook)
@@ -132,7 +110,7 @@ private:
     DependencyAnalyzer::Bitmask _buildConflictSubBitmask(
         const std::vector<unsigned> &vars,
         const std::vector<bool> &isActive ) const;
-        
+
 
     unsigned _reluIndexToSatVar( unsigned relu ) const;
     unsigned _reluIndexToSatVarForce( unsigned relu );
@@ -153,45 +131,6 @@ private:
 
 
     
-    /*
-    Return true iff `mask` is a superset of a previously-recorded *minimal dependency var-set*.
-
-    This is used by the DependencyCalculator *before* running expensive slicing / analysis,
-    to avoid analyzing neuron sets whose var-set already contains a known smaller dependency.
-    */
-    bool _isNonMinimalDependencyVars( const DependencyAnalyzer::Bitmask &mask ) const;
-
-    /*
-    Build a full dependency-var bitmask from a set of ReLU vars (old indexing).
-    Each variable corresponds to a single bit (no polarity).
-
-    Requires that all vars already have a mapping oldVar -> satVar (i.e., satVar != 0),
-    because the bit positions are SAT-var indexed.
-    */
-    DependencyAnalyzer::Bitmask
-    _buildDependencyVarsBitmask( const std::vector<unsigned> &vars ) const;
-
-    /*
-    Build a *sub* dependency-var bitmask from a set of ReLU vars (old indexing).
-    Variables that do not yet have a SAT mapping are skipped.
-
-    This allows early pruning checks even if the SAT mapping is incomplete.
-    */
-    DependencyAnalyzer::Bitmask
-    _buildDependencyVarsSubBitmask( const std::vector<unsigned> &vars ) const;
-
-    /*
-    Record a newly found dependency var-set as minimal:
-    - store the full bitmask in `_minimalDependencyVarBitmasks`
-    - intended to be called after we actually confirm a dependency exists
-        (and we are about to add it as a conflict / nogood).
-    */
-    void _recordMinimalDependencyVars( const std::vector<unsigned> &vars );
-    void _encodeMinimalBitmasks( const Conflict &conflict );
-
-    void calculateDependencies();
-
-
 
 
 
@@ -232,26 +171,12 @@ private:
      * Minimal conflict tracking (SAT-var indexed)
      */
     std::vector<DependencyAnalyzer::Bitmask> _minimalConflictBitmasks;
-
-    // Store minimal dependency var-sets as bitmasks (vars only, no polarity)
-    std::vector<DependencyAnalyzer::Bitmask> _minimalDependencyVarBitmasks;
-    
-    unsigned _bitmaskConflictSize;
-    // Bitmask size for dependency-var minimality (set in notifySolvingStarted)
-    unsigned _bitmaskDependencyVSize;
-
+    unsigned _bitmaskSize;
 
     /*
      * Phase tracking (context-dependent)
      */
     CVC4::context::CDHashMap<unsigned, ReLURuntimeState, std::hash<unsigned>> *_seenPhase;
-
-
-    // IncrementalConflictAnalyser.h (private)
-    const Query *_engineQuery;                 // current preprocessed query (Engine-owned)
-    NLR::NetworkLevelReasoner *_nlr;     // borrowed from _engineQuery
-    BoundManager *_boundManager;               // optional sanity
-
 };
 
 #endif // __IncrementalConflictAnalyser_h__

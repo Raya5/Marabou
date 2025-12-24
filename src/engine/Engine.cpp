@@ -37,17 +37,6 @@
 #include "IncrementalConflictAnalyser.h"
 // #include "Dependency.h"
 
-#include "GurobiWrapper.h"
-
-#include "Debug.h"
-#include "FloatUtils.h"
-#include "GlobalConfiguration.h"
-#include "MStringf.h"
-#include "Options.h"
-#include "gurobi_c.h"
-
-#include <iostream>
-
 #include <random>
 
 Engine::Engine()
@@ -261,20 +250,11 @@ bool Engine::solve( double timeoutInSeconds )
 
     bool splitJustPerformed = true;
     if ( _incrementalMode )
-    {
-        ASSERT( _preprocessedQuery );
-        ASSERT( _preprocessedQuery->getNetworkLevelReasoner() );
-        _incrementalConflictAnalyser->notifySolvingStarted(
-            _preprocessedQuery->getNumberOfVariables(),
-            _preprocessedQuery.get(),
-            _preprocessedQuery->getNetworkLevelReasoner(),
-            &_boundManager );
-    }
-
+        _incrementalConflictAnalyser->notifySolvingStarted( _preprocessedQuery->getNumberOfVariables() );
+    
     struct timespec mainLoopStart = TimeUtils::sampleMicro();
     while ( true )
-    {  
-        fflush(stdout);       
+    {
         struct timespec mainLoopEnd = TimeUtils::sampleMicro();
         _statistics.incLongAttribute( Statistics::TIME_MAIN_LOOP_MICRO,
                                       TimeUtils::timePassed( mainLoopStart, mainLoopEnd ) );
