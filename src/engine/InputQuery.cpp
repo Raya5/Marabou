@@ -411,3 +411,14 @@ std::shared_ptr<DependencyAnalyzer> InputQuery::getDependencyAnalyzer() const
 {
     return _dependencyAnalyzer;
 }
+
+void InputQuery::setIncrementalConflictAnalyser(
+    std::shared_ptr<IncrementalConflictAnalyser> analyser )
+{
+    _incrementalConflictAnalyser = std::move( analyser );
+}
+
+std::shared_ptr<IncrementalConflictAnalyser> InputQuery::getIncrementalConflictAnalyser() const
+{
+    return _incrementalConflictAnalyser;
+}

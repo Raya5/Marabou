@@ -66,7 +66,8 @@ class Query;
 class PiecewiseLinearConstraint;
 class String;
 // --- incremental ---
-class DependencyAnalyzer;
+// class DependencyAnalyzer;
+class IncrementalConflictAnalyser;
 
 using CVC4::context::Context;
 
@@ -317,8 +318,15 @@ public:
     const List<PiecewiseLinearConstraint *> *getPiecewiseLinearConstraints() const override;
 
     // --- incremental ---
-    void setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer );
-    std::shared_ptr<DependencyAnalyzer> getDependencyAnalyzer() const;
+    // void setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer );
+    // std::shared_ptr<DependencyAnalyzer> getDependencyAnalyzer() const;
+
+    void setIncrementalConflictAnalyser(
+        std::shared_ptr<IncrementalConflictAnalyser> incrementalConflictAnalyser );
+
+    std::shared_ptr<IncrementalConflictAnalyser>
+    getIncrementalConflictAnalyser() const;
+
     
     /*
       Ask the DependencyAnalyzer for implied tightenings (from active dependencies)
@@ -331,6 +339,7 @@ public:
         - Incremental mode is not combined with _produceUNSATProofs
     */
     void applyDependencyAnalyzerTightenings();
+    void applyIncrementalConflictAnalyserTightenings();
 
 
 private:
@@ -948,8 +957,9 @@ private:
 
     // --- incremental ---
     bool _incrementalMode;
-    unsigned _dependencyRequestsCounter;
-    std::shared_ptr<DependencyAnalyzer> _dependencyAnalyzer; // null if not incremental
+    // unsigned _dependencyRequestsCounter;
+    // std::shared_ptr<DependencyAnalyzer> _dependencyAnalyzer; // null if not incremental
+    std::shared_ptr<IncrementalConflictAnalyser> _incrementalConflictAnalyser; // null if not incremental
     void recordConflictFromCurrentDecisions();
 
 

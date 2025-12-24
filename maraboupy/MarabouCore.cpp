@@ -46,6 +46,7 @@
 #include "DependencyAnalyzer.h"
 #include "Preprocessor.h"
 #include "GlobalConfiguration.h"
+#include "IncrementalConflictAnalyser.h"
 
 #include <fcntl.h>
 #include <map>
@@ -425,19 +426,18 @@ solve( InputQuery &inputQuery, MarabouOptions &options, std::string redirect = "
 
         bool dnc = Options::get()->getBool( Options::DNC_MODE );
         bool incremental = Options::get()->getBool( Options::INCREMENTAL_MODE ); //for later use
-
         Engine engine;
 
         // If incremental mode: plumb any analyzer carried by the IPQ
         if ( incremental ) {
-            auto dependencyAnalyzer = inputQuery.getDependencyAnalyzer();
-            if ( dependencyAnalyzer ) 
+            auto incrementalConflictAnalyser = inputQuery.getIncrementalConflictAnalyser();
+            if ( incrementalConflictAnalyser ) 
             {
-                engine.setDependencyAnalyzer( dependencyAnalyzer );
+                engine.setIncrementalConflictAnalyser( incrementalConflictAnalyser );
             }
             else
             {
-                throw MarabouError( MarabouError::DEBUGGING_ERROR, "Incremental mode set but no dependency analyzer passed with the InputQuery." );
+                throw MarabouError( MarabouError::DEBUGGING_ERROR, "Incremental mode set but no incremental conflict analyser passed with the InputQuery." );
             }
         }
 
@@ -596,6 +596,21 @@ buildDependencyAnalyzer( const InputQuery &baseIpq,
 
     return std::make_shared<DependencyAnalyzer>( &baseIpq, allLbsVector, allUbsVector );
 }
+
+// incremental
+/**
+ * Build and return an IncrementalConflictAnalyser instance.
+ *
+ * reuseAllConflicts:
+ *   false -> ONLY_LAST
+ *   true  -> ALL_LAST
+ */
+std::shared_ptr<IncrementalConflictAnalyser>
+buildIncrementalConflictAnalyser( bool reuseAllConflicts )
+{
+    return std::make_shared<IncrementalConflictAnalyser>( reuseAllConflicts );
+}
+
 
 
 
@@ -881,7 +896,9 @@ PYBIND11_MODULE( MarabouCore, m )
         .def( "outputVariableByIndex", &InputQuery::outputVariableByIndex )
         // incremental
         .def("setDependencyAnalyzer", &InputQuery::setDependencyAnalyzer)
-        .def("getDependencyAnalyzer", &InputQuery::getDependencyAnalyzer);
+        .def("getDependencyAnalyzer", &InputQuery::getDependencyAnalyzer)
+        .def( "setIncrementalConflictAnalyser", &InputQuery::setIncrementalConflictAnalyser )
+        .def( "getIncrementalConflictAnalyser", &InputQuery::getIncrementalConflictAnalyser );
     py::enum_<PiecewiseLinearFunctionType>( m, "PiecewiseLinearFunctionType" )
         .value( "ReLU", PiecewiseLinearFunctionType::RELU )
         .value( "AbsoluteValue", PiecewiseLinearFunctionType::ABSOLUTE_VALUE )
@@ -1032,6 +1049,31 @@ PYBIND11_MODULE( MarabouCore, m )
     // Minimal class binding so Python can hold the analyzer
     py::class_<DependencyAnalyzer, std::shared_ptr<DependencyAnalyzer>>(m, "DependencyAnalyzer")
         .def("getBaseInputQuery", &DependencyAnalyzer::getBaseInputQuery);
+
+    // Incremental Conflict Analyser
+    py::class_<IncrementalConflictAnalyser,
+            std::shared_ptr<IncrementalConflictAnalyser>>(
+        m, "IncrementalConflictAnalyser" )
+        .def( "setNewEpsilon", &IncrementalConflictAnalyser::setNewEpsilon )
+        .def( "notifySolvingStarted", &IncrementalConflictAnalyser::notifySolvingStarted )
+        .def( "notifySolved", &IncrementalConflictAnalyser::notifySolved );
+
+    m.def(
+        "buildIncrementalConflictAnalyser",
+        &buildIncrementalConflictAnalyser,
+        R"pbdoc(
+            Build an IncrementalConflictAnalyser.
+
+            Args:
+                reuseAllConflicts (bool):
+                    False -> ONLY_LAST (keep SAT solver state)
+                    True  -> ALL_LAST  (recreate SAT solver per epsilon)
+
+            Returns:
+                IncrementalConflictAnalyser
+        )pbdoc",
+        py::arg( "reuseAllConflicts" )
+    );
 
     // Factory function exposed to Python
     m.def(

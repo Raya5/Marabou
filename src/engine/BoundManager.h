@@ -55,6 +55,7 @@
 class ITableau;
 class IEngine;
 class DependencyAnalyzer;
+class IncrementalConflictAnalyser;
 class BoundManager : public IBoundManager
 {
 public:
@@ -219,6 +220,9 @@ public:
     bool shouldProduceProofs() const;
 
     void setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer );
+    void setIncrementalConflictAnalyser(
+    std::shared_ptr<IncrementalConflictAnalyser> incrementalConflictAnalyser );
+
 
 private:
     CVC4::context::Context &_context;
@@ -241,6 +245,8 @@ private:
     Vector<CVC4::context::CDO<bool> *> _tightenedUpper;
 
     std::shared_ptr<DependencyAnalyzer> _dependencyAnalyzer; // null if not incremental
+    std::shared_ptr<IncrementalConflictAnalyser> _incrementalConflictAnalyser;
+
 
     /*
        Record first tightening that violates bounds

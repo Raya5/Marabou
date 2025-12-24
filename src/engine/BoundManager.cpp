@@ -21,6 +21,7 @@
 #include "Tableau.h"
 #include "Tightening.h"
 #include "DependencyAnalyzer.h"
+#include "IncrementalConflictAnalyser.h"
 
 using namespace CVC4::context;
 
@@ -192,6 +193,10 @@ bool BoundManager::setLowerBound( unsigned variable, double value )
         {
             _dependencyAnalyzer->notifyLowerBoundUpdate( variable, oldLb, value );
         }
+        if ( _incrementalConflictAnalyser )
+        {
+            _incrementalConflictAnalyser->notifyUpperBoundUpdate( variable, oldLb, value );
+        }
 
         return true;
     }
@@ -215,6 +220,10 @@ bool BoundManager::setUpperBound( unsigned variable, double value )
         if ( _dependencyAnalyzer )
         {
             _dependencyAnalyzer->notifyUpperBoundUpdate( variable, oldUb, value );
+        }
+        if ( _incrementalConflictAnalyser )
+        {
+            _incrementalConflictAnalyser->notifyUpperBoundUpdate( variable, oldUb, value );
         }
 
         return true;
@@ -619,4 +628,9 @@ bool BoundManager::shouldProduceProofs() const
 void BoundManager::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer )
 {
     _dependencyAnalyzer = dependencyAnalyzer;
+}
+void BoundManager::setIncrementalConflictAnalyser(
+    std::shared_ptr<IncrementalConflictAnalyser> incrementalConflictAnalyser )
+{
+    _incrementalConflictAnalyser = incrementalConflictAnalyser;
 }

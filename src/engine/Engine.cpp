@@ -33,8 +33,9 @@
 #include "VariableOutOfBoundDuringOptimizationException.h"
 #include "Vector.h"
 // --- incremental ---
-#include "DependencyAnalyzer.h"
-#include "Dependency.h"
+// #include "DependencyAnalyzer.h"
+#include "IncrementalConflictAnalyser.h"
+// #include "Dependency.h"
 
 #include <random>
 
@@ -76,7 +77,8 @@ Engine::Engine()
     , _groundBoundManager( _context )
     , _UNSATCertificate( NULL )
     , _incrementalMode( Options::get()->getBool( Options::INCREMENTAL_MODE ) )
-    , _dependencyAnalyzer( NULL )
+    // , _dependencyAnalyzer( NULL )
+    , _incrementalConflictAnalyser( NULL )
 {
     _searchTreeHandler.setStatistics( &_statistics );
     _tableau->setStatistics( &_statistics );
@@ -233,27 +235,27 @@ bool Engine::solve( double timeoutInSeconds )
 
     // --- incremental ---
     if ( _incrementalMode ) {
-        ASSERT( _dependencyAnalyzer );
+        ASSERT( _incrementalConflictAnalyser );
         ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
-        _dependencyAnalyzer->setCurrentPreprocessedQuery( *_preprocessedQuery );
-        _dependencyAnalyzer->setCurrentNetworkLevelReasoner( _networkLevelReasoner );
-        _dependencyAnalyzer->setContext( &_context);
-        _dependencyAnalyzer->setPreprocessor( &_preprocessor);
-
+        _incrementalConflictAnalyser->setContext( &_context);
+        _incrementalConflictAnalyser->setPreprocessor( &_preprocessor);
 
        // Sync DA with Engine's preprocessed query
        ASSERT( _preprocessedQuery );
-       _dependencyAnalyzer->syncWithEnginePreprocessedQuery( *_preprocessedQuery );
+       _incrementalConflictAnalyser->syncWithEnginePreprocessedQuery( *_preprocessedQuery ); // update _seenPhase with any set vars that are also in from varindex to sat index
 
-        _boundManager.setDependencyAnalyzer( _dependencyAnalyzer );
+        _boundManager.setIncrementalConflictAnalyser( _incrementalConflictAnalyser );
     } else if ( Options::get()->getBool( Options::INCREMENTAL_MODE ) ) {
         printf( "[Engine] Incremental mode enabled (no analyzer attached)\n" );
     }
 
     bool splitJustPerformed = true;
+    if ( _incrementalMode )
+        _incrementalConflictAnalyser->notifySolvingStarted( _preprocessedQuery->getNumberOfVariables() );
+    
     struct timespec mainLoopStart = TimeUtils::sampleMicro();
     while ( true )
-    {
+    {        
         struct timespec mainLoopEnd = TimeUtils::sampleMicro();
         _statistics.incLongAttribute( Statistics::TIME_MAIN_LOOP_MICRO,
                                       TimeUtils::timePassed( mainLoopStart, mainLoopEnd ) );
@@ -268,9 +270,8 @@ bool Engine::solve( double timeoutInSeconds )
                 _statistics.print();
             }
             if ( _incrementalMode ) {
-                ASSERT( _dependencyAnalyzer );
                 ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
-                _dependencyAnalyzer->notifyQuerySolved();
+                _incrementalConflictAnalyser->notifySolved();
             }
             _exitCode = Engine::TIMEOUT;
             _statistics.timeout();
@@ -325,7 +326,7 @@ bool Engine::solve( double timeoutInSeconds )
                 // DA hook
                 if ( _incrementalMode )
                 {
-                    applyDependencyAnalyzerTightenings();
+                    applyIncrementalConflictAnalyserTightenings();
                 }
                 informLPSolverOfBounds();
                 splitJustPerformed = false;
@@ -378,9 +379,8 @@ bool Engine::solve( double timeoutInSeconds )
                             ( **_UNSATCertificateCurrentPointer ).setSATSolutionFlag();
                         }
                         if ( _incrementalMode ) {
-                            ASSERT( _dependencyAnalyzer );
                             ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
-                            _dependencyAnalyzer->notifyQuerySolved();
+                            _incrementalConflictAnalyser->notifySolved();
                         }
                         _exitCode = Engine::SAT;
                         return true;
@@ -397,9 +397,8 @@ bool Engine::solve( double timeoutInSeconds )
                             _statistics.print();
                         }
                         if ( _incrementalMode ) {
-                            ASSERT( _dependencyAnalyzer );
                             ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
-                            _dependencyAnalyzer->notifyQuerySolved();
+                            _incrementalConflictAnalyser->notifySolved();
                         }
                         _exitCode = Engine::UNKNOWN;
                         return false;
@@ -416,7 +415,6 @@ bool Engine::solve( double timeoutInSeconds )
                     continue;
                 }
             }
-
             // We have out-of-bounds variables.
             if ( _lpSolverType == LPSolverType::NATIVE )
                 performSimplexStep();
@@ -454,8 +452,6 @@ bool Engine::solve( double timeoutInSeconds )
 
             if ( _incrementalMode )
             {
-                // ASSERT( _searchTreeHandler.getStackDepth() > 0 ||
-                //        _searchTreeHandler.getImpliedValidSplitsAtRoot().size() > 0 );
                 recordConflictFromCurrentDecisions();
             }
             if ( !_searchTreeHandler.popSplit() )
@@ -469,9 +465,8 @@ bool Engine::solve( double timeoutInSeconds )
                     _statistics.print();
                 }
                 if ( _incrementalMode ) {
-                    ASSERT( _dependencyAnalyzer );
                     ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
-                    _dependencyAnalyzer->notifyQuerySolved();
+                    _incrementalConflictAnalyser->notifySolved();
                 }
                 _exitCode = Engine::UNSAT;
                 return false;
@@ -4152,125 +4147,136 @@ Engine::analyseExplanationDependencies( const SparseUnsortedList &explanation,
 
 
 // --- incremental ---
-void Engine::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer ) 
+// void Engine::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer ) 
+// {
+//     _dependencyAnalyzer = dependencyAnalyzer;
+
+// }
+// std::shared_ptr<DependencyAnalyzer> Engine::getDependencyAnalyzer() const 
+// { 
+//     return _dependencyAnalyzer; 
+// }
+
+void Engine::setIncrementalConflictAnalyser(
+    std::shared_ptr<IncrementalConflictAnalyser> incrementalConflictAnalyser )
 {
-    _dependencyAnalyzer = dependencyAnalyzer;
-
-}
-std::shared_ptr<DependencyAnalyzer> Engine::getDependencyAnalyzer() const 
-{ 
-    return _dependencyAnalyzer; 
+    _incrementalConflictAnalyser = incrementalConflictAnalyser;
 }
 
-void Engine::applyDependencyAnalyzerTightenings()
+std::shared_ptr<IncrementalConflictAnalyser>
+Engine::getIncrementalConflictAnalyser() const
 {
-    ASSERT( _incrementalMode );
-    ASSERT( _dependencyAnalyzer );
-    ASSERT( _lpSolverType == LPSolverType::NATIVE || _lpSolverType == LPSolverType::GUROBI );
-    ASSERT( !_produceUNSATProofs ); // incremental and UNSAT proofs assumed mutually exclusive
+    return _incrementalConflictAnalyser;
+}
 
-    _dependencyRequestsCounter++;
+// void Engine::applyDependencyAnalyzerTightenings()
+// {
+//     ASSERT( false && "silencing this for now")
+//     ASSERT( _incrementalMode );
+//     ASSERT( _dependencyAnalyzer );
+//     ASSERT( _lpSolverType == LPSolverType::NATIVE || _lpSolverType == LPSolverType::GUROBI );
+//     ASSERT( !_produceUNSATProofs ); // incremental and UNSAT proofs assumed mutually exclusive
 
-    // if ( _dependencyRequestsCounter < 2 )
-    // {
-    //     return;
-    // }
-    // bool calculateDependencies =  _dependencyRequestsCounter == 2;
+//     // _dependencyRequestsCounter++;
+
+//     // if ( _dependencyRequestsCounter < 2 )
+//     // {
+//     //     return;
+//     // }
+//     // bool calculateDependencies =  _dependencyRequestsCounter == 2;
 
 
-    /*
-      Ask the DependencyAnalyzer for implied tightenings.
+//     /*
+//       Ask the DependencyAnalyzer for implied tightenings.
 
-      There are currently two implementations:
+//       There are currently two implementations:
 
-        - getImpliedTightenings(...)          // legacy, based on direct dependency reasoning
-        - getImpliedTighteningsFromSat(...)   // new, SAT-based using CaDiCaL
+//         - getImpliedTightenings(...)          // legacy, based on direct dependency reasoning
+//         - getImpliedTighteningsFromSat(...)   // new, SAT-based using CaDiCaL
 
-      We use the SAT-based version by default. The legacy version is kept
-      around for debugging / comparison and can be re-enabled if needed.
-    */
-    List<Tightening> tightenings;
-    bool noConflict = _dependencyAnalyzer->getImpliedTighteningsFromSat( tightenings, false );
-    // printf("Called getImpliedTighteningsFromSat with calculateDependencies=%u because _dependencyRequestsCounter is %u\n",
-    //        calculateDependencies, _dependencyRequestsCounter);
-    if ( !noConflict )
-    {
-        printf( "[Engine][IV] applyDependencyAnalyzerTightenings: detected conflict from DA\n" );
-        throw InfeasibleQueryException();
-    }
-    printf( "[Engine][IV] applyDependencyAnalyzerTightenings: %u tightenings\n",
-            tightenings.size() );
+//       We use the SAT-based version by default. The legacy version is kept
+//       around for debugging / comparison and can be re-enabled if needed.
+//     */
+//     List<Tightening> tightenings;
+//     bool noConflict = _dependencyAnalyzer->getImpliedTighteningsFromSat( tightenings, false );
+//     // printf("Called getImpliedTighteningsFromSat with calculateDependencies=%u because _dependencyRequestsCounter is %u\n",
+//     //        calculateDependencies, _dependencyRequestsCounter);
+//     if ( !noConflict )
+//     {
+//         printf( "[Engine][IV] applyDependencyAnalyzerTightenings: detected conflict from DA\n" );
+//         throw InfeasibleQueryException();
+//     }
+//     printf( "[Engine][IV] applyDependencyAnalyzerTightenings: %u tightenings\n",
+//             tightenings.size() );
             
-    if ( tightenings.empty() )
-    {
-        return;
-    }
-    _statistics.incUnsignedAttribute( Statistics::NUM_INCREMENTAL_TIGHTENINGS,
-                                  tightenings.size() );
+//     if ( tightenings.empty() )
+//     {
+//         return;
+//     }
+//     _statistics.incUnsignedAttribute( Statistics::NUM_INCREMENTAL_TIGHTENINGS,
+//                                   tightenings.size() );
 
-    for ( const auto &tightening : tightenings )
-    {
-        const unsigned engineVar  = tightening._variable;                          // variable id as seen by Engine / BoundManager
-        const unsigned tableauVar = _tableau->getVariableAfterMerging( engineVar ); // after merging in the tableau
+//     for ( const auto &tightening : tightenings )
+//     {
+//         const unsigned engineVar  = tightening._variable;                          // variable id as seen by Engine / BoundManager
+//         const unsigned tableauVar = _tableau->getVariableAfterMerging( engineVar ); // after merging in the tableau
 
-        const double currentLb = _boundManager.getLowerBound( engineVar );
-        const double currentUb = _boundManager.getUpperBound( engineVar );
+//         const double currentLb = _boundManager.getLowerBound( engineVar );
+//         const double currentUb = _boundManager.getUpperBound( engineVar );
 
-        if ( tightening._type == Tightening::LB )
-        {
-            const double newLb = tightening._value;
+//         if ( tightening._type == Tightening::LB )
+//         {
+//             const double newLb = tightening._value;
 
-            // Safety: new LB must not exceed current UB
-            // ASSERT( !FloatUtils::gt( newLb, currentUb ) ); // Can heppen, means unsat query
-            // The analyzer should not emit strictly worse LBs
-            // printf( "Tightening LB of x%u from %.6f to %.6f\n", engineVar, currentLb, newLb );
-            ASSERT( !FloatUtils::lt( newLb, currentLb ) );
+//             // Safety: new LB must not exceed current UB
+//             // ASSERT( !FloatUtils::gt( newLb, currentUb ) ); // Can heppen, means unsat query
+//             // The analyzer should not emit strictly worse LBs
+//             // printf( "Tightening LB of x%u from %.6f to %.6f\n", engineVar, currentLb, newLb );
+//             ASSERT( !FloatUtils::lt( newLb, currentLb ) );
 
-            _boundManager.tightenLowerBound( tableauVar, newLb );
+//             _boundManager.tightenLowerBound( tableauVar, newLb );
 
-        }
-        else if ( tightening._type == Tightening::UB )
-        {
-            const double newUb = tightening._value;
+//         }
+//         else if ( tightening._type == Tightening::UB )
+//         {
+//             const double newUb = tightening._value;
 
-            // Safety: new UB must not go below current LB
-            // ASSERT( !FloatUtils::lt( newUb, currentLb ) ); // Can heppen, means unsat query
-            // The analyzer should not emit strictly worse UBs
-            ASSERT( !FloatUtils::gt( newUb, currentUb ) );
+//             // Safety: new UB must not go below current LB
+//             // ASSERT( !FloatUtils::lt( newUb, currentLb ) ); // Can heppen, means unsat query
+//             // The analyzer should not emit strictly worse UBs
+//             ASSERT( !FloatUtils::gt( newUb, currentUb ) );
 
-            _boundManager.tightenUpperBound( tableauVar, newUb );
+//             _boundManager.tightenUpperBound( tableauVar, newUb );
 
-        }
-        else
-        {
-            // Tightening type must be LB or UB
-            ASSERT( false );
-        }
-    }
-}
+//         }
+//         else
+//         {
+//             // Tightening type must be LB or UB
+//             ASSERT( false );
+//         }
+//     }
+// }
 
 void Engine::recordConflictFromCurrentDecisions()
 {
+    ASSERT( _incrementalMode );
+
     const unsigned depth = _searchTreeHandler.getStackDepth();
     printf( "[Engine][IV] recordConflictFromCurrentDecisions at depth %u\n", depth );
 
+    ASSERT( _incrementalConflictAnalyser );
+
     List<PiecewiseLinearCaseSplit> decisions;
     _searchTreeHandler.allDecisionSplitsSoFar( decisions );
-
-    // One decision per stack frame
     ASSERT( decisions.size() == depth );
 
-    std::vector<unsigned> vars;
-    std::vector<ReLUState> states;
-    vars.reserve( decisions.size() );
-    states.reserve( decisions.size() );
+    std::vector<unsigned> oldVars;
+    std::vector<bool> isActiveList;
+    oldVars.reserve( decisions.size() );
+    isActiveList.reserve( decisions.size() );
 
-    printf( "\n[UNSAT LEAF] Decision trail (%u decisions):\n", decisions.size() );
-
-    unsigned idx = 0;
     for ( const auto &split : decisions )
     {
-        // --- Structural assertions ---
         ASSERT( split.getBoundTightenings().size() == 2 );
         ASSERT( split.getEquations().empty() );
 
@@ -4279,71 +4285,102 @@ void Engine::recordConflictFromCurrentDecisions()
         const Tightening &t0 = *it++;
         const Tightening &t1 = *it++;
 
-        // Value invariants (current decision encoding)
         ASSERT( FloatUtils::areEqual( t0._value, 0.0 ) );
         ASSERT( FloatUtils::areEqual( t1._value, 0.0 ) );
 
-        // Enforce assumption: t0 is the ReLU variable
-        const unsigned reluVar = t0._variable;
-        ASSERT( reluVar == std::min( t0._variable, t1._variable ) );
+        const unsigned reluVar = std::min( t0._variable, t1._variable );
 
-        // Phase classification (total, no UNKNOWN)
-        ReLUState st;
+        bool isActive;
         if ( t0._type == Tightening::UB && t1._type == Tightening::UB )
-        {
-            st = ReLUState::Inactive;
-        }
+            isActive = false; // Inactive
         else if ( ( t0._type == Tightening::LB && t1._type == Tightening::UB ) ||
                   ( t0._type == Tightening::UB && t1._type == Tightening::LB ) )
+            isActive = true;  // Active
+        else
+            ASSERT( false && "Unexpected decision split pattern" );
+
+        const unsigned oldVar = _preprocessor.getOldIndex( reluVar );
+        oldVars.push_back( oldVar );
+        isActiveList.push_back( isActive );
+    }
+
+    ASSERT( oldVars.size() == isActiveList.size() );
+    _incrementalConflictAnalyser->addConflict( oldVars, isActiveList );
+
+    printf( "[Engine][IV] Stored conflict of size %zu: ", oldVars.size() );
+    for ( size_t i = 0; i < oldVars.size(); ++i )
+        printf( " (%u,%s)", oldVars[i], isActiveList[i] ? "A" : "I" );
+    printf( "\n" );
+}
+
+void Engine::applyIncrementalConflictAnalyserTightenings()
+{
+    ASSERT( _incrementalMode );
+    ASSERT( _incrementalConflictAnalyser );   // <-- if this fires you found it
+    ASSERT( !_produceUNSATProofs );
+
+    /*
+      Ask the IncrementalConflictAnalyser for implied tightenings.
+
+      Current plan:
+        - SAT-based reasoning using CaDiCaL over learned conflicts + seen phases.
+        - If a conflict is detected (i.e., current decisions imply UNSAT), throw.
+    */
+    List<Tightening> tightenings;
+
+    // Adjust this call to match your ICA API:
+    // Option A (DA-like): returns bool noConflict
+    const bool noConflict = _incrementalConflictAnalyser->getImpliedTighteningsFromSat( tightenings );
+
+    if ( !noConflict )
+    {
+        throw InfeasibleQueryException();
+    }
+
+    printf( "[Engine][IV] applyIncrementalConflictAnalyserTightenings: %u tightenings\n",
+            tightenings.size() );
+
+    if ( tightenings.empty() )
+        return;
+
+    _statistics.incUnsignedAttribute( Statistics::NUM_INCREMENTAL_TIGHTENINGS,
+                                      tightenings.size() );
+
+    for ( const auto &tightening : tightenings )
+    {
+        const unsigned engineVar  = tightening._variable;
+        const unsigned tableauVar = _tableau->getVariableAfterMerging( engineVar );
+
+        const double currentLb = _boundManager.getLowerBound( engineVar );
+        const double currentUb = _boundManager.getUpperBound( engineVar );
+
+        if ( tightening._type == Tightening::LB )
         {
-            st = ReLUState::Active;
+            const double newLb = tightening._value;
+
+            // ICA should not emit weaker LB than current
+            ASSERT( !FloatUtils::lt( newLb, currentLb ) );
+
+            // Optional safety (might legitimately fail -> UNSAT)
+            // ASSERT( !FloatUtils::gt( newLb, currentUb ) );
+
+            _boundManager.tightenLowerBound( tableauVar, newLb );
+        }
+        else if ( tightening._type == Tightening::UB )
+        {
+            const double newUb = tightening._value;
+
+            // ICA should not emit weaker UB than current
+            ASSERT( !FloatUtils::gt( newUb, currentUb ) );
+
+            // Optional safety (might legitimately fail -> UNSAT)
+            // ASSERT( !FloatUtils::lt( newUb, currentLb ) );
+
+            _boundManager.tightenUpperBound( tableauVar, newUb );
         }
         else
         {
-            ASSERT( false && "Unexpected decision split pattern" );
+            ASSERT( false );
         }
-
-        vars.push_back( reluVar );
-        states.push_back( st );
-
-        // Compact print (decision literal)
-        printf( "  [%u] reluVar=%u  state=%s   "
-                "(x%u %s 0, x%u %s 0)\n",
-                idx++,
-                reluVar,
-                ( st == ReLUState::Active ? "ACTIVE" : "INACTIVE" ),
-                t0._variable, ( t0._type == Tightening::LB ? ">=" : "<=" ),
-                t1._variable, ( t1._type == Tightening::LB ? ">=" : "<=" ) );
     }
-    std::vector<unsigned> oldVars;
-    oldVars.reserve( decisions.size() );
-    for ( unsigned i = 0; i < vars.size(); ++i )
-    {
-        unsigned oldVar = _preprocessor.getOldIndex( vars[i] );
-        printf( "[Engine][IV] Decision %u: currentVar=%u, beforePreprocessing=%u\n",
-                i, vars[i], oldVar );
-        oldVars.push_back( oldVar );
-    }
-
-    // Build the dependency (not yet added to analyzer)
-    Dependency dep( oldVars, states );
-
-    printf( "[Engine][IV] Built conflict dependency of size %zu\n", dep.size() );
-    for ( size_t i = 0; i < vars.size(); ++i )
-        printf( "    (%u,%s)",
-                vars[i],
-                states[i] == ReLUState::Active ? "A" : "I" );
-
-    printf( "[END UNSAT TRAIL]\n\n" );
-
-    printf( "[Engine][IV] Built conflict using old vars dependency of size %zu\n", dep.size() );
-    for ( size_t i = 0; i < oldVars.size(); ++i )
-        printf( "    (%u,%s)",
-                oldVars[i],
-                states[i] == ReLUState::Active ? "A" : "I" );
-
-    printf( "\n[END UNSAT TRAIL]\n\n" );
-
-    _dependencyAnalyzer->recordConflictIfNew( dep );
 }
-
