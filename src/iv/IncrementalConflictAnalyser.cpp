@@ -1,6 +1,7 @@
 #include "IncrementalConflictAnalyser.h"
 #include "Query.h"
 #include "FloatUtils.h"
+#include "DependencyCalculator.h"
 #include <cmath> 
 
 #include <cassert>
@@ -11,8 +12,12 @@ IncrementalConflictAnalyser::IncrementalConflictAnalyser( bool reuseAllConflicts
     , _currentEpsilon( -1.0 )
     , _reuseAllConflicts( reuseAllConflicts )
     , _cadical( nullptr )
-    , _bitmaskSize( 0 )
+    , _bitmaskConflictSize( 0 )
+    , _bitmaskDependencyVSize( 0 )
     , _seenPhase( nullptr )
+    , _engineQuery( nullptr )
+    , _nlr( nullptr )
+    , _boundManager( nullptr )
 {
 }
 
@@ -71,7 +76,7 @@ void IncrementalConflictAnalyser::setNewEpsilon( double epsilon )
     _currentEpsilon = epsilon;
 }
 
-void IncrementalConflictAnalyser::addConflict(
+bool IncrementalConflictAnalyser::addConflict(
     const std::vector<unsigned> &vars,
     const std::vector<bool> &isActiveList )
 {
@@ -81,7 +86,7 @@ void IncrementalConflictAnalyser::addConflict(
     // Minimality pruning (optional; keep if it works)
     DependencyAnalyzer::Bitmask subMask = _buildConflictSubBitmask( vars, isActiveList );
     if ( _isNonMinimalConflict( subMask ) )
-        return;
+        return false;
 
     _conflicts.emplace_back( _currentEpsilon, vars, isActiveList );
 
@@ -90,7 +95,72 @@ void IncrementalConflictAnalyser::addConflict(
 
     DependencyAnalyzer::Bitmask fullMask = _buildConflictBitmask( vars, isActiveList );
     _minimalConflictBitmasks.push_back( fullMask );
+    return true;
 }
+
+void IncrementalConflictAnalyser::addDependency( const std::vector<unsigned> &vars,
+                                                 const std::vector<bool> &isActiveList )
+{
+    ASSERT( _currentEpsilon >= 0.0 );
+    ASSERT( vars.size() == isActiveList.size() );
+    ASSERT( vars.size() > 0 );
+    ASSERT( _bitmaskDependencyVSize > 0 );
+
+    // Canonical ordering
+    for ( size_t i = 1; i < vars.size(); ++i )
+        ASSERT( vars[i - 1] < vars[i] );
+
+    // --- Early pruning: vars only (ignore polarity) ---
+    DependencyAnalyzer::Bitmask subMask = _buildDependencyVarsSubBitmask( vars );
+    if ( _isNonMinimalDependencyVars( subMask ) )
+        ASSERT( false && "Not supposed to happen.");
+
+    // --- Store + encode as a conflict (this calls _encodeConflictClause) ---
+    bool res = addConflict( vars, isActiveList );
+    ASSERT(res);
+
+    // --- Record minimal dependency var-set (full mask) ---
+    // DependencyAnalyzer::Bitmask fullMask = _buildDependencyVarsBitmask( vars );
+    _recordMinimalDependencyVars( vars );
+}
+
+bool IncrementalConflictAnalyser::isNonMinimalDependencyVarsSubMask(
+    const std::vector<unsigned> &vars ) const
+{
+    ASSERT( _bitmaskDependencyVSize > 0 );
+
+    // Empty set cannot be non-minimal
+    if ( vars.empty() )
+        return false;
+
+    // Build vars-only *sub* mask (skips unmapped SAT vars)
+    DependencyAnalyzer::Bitmask subMask( _bitmaskDependencyVSize );
+
+    for ( unsigned oldVar : vars )
+    {
+        const unsigned satVar = _reluIndexToSatVar( oldVar );
+        if ( satVar == 0 )
+            continue; // unmapped → ignored in sub-mask
+
+        ASSERT( satVar < _bitmaskDependencyVSize );
+        subMask.set( satVar );
+    }
+
+    // If nothing mapped yet, cannot prune
+    if ( subMask.none() )
+        return false;
+
+    // Superset check against known minimal dependency var-sets
+    for ( const auto &known : _minimalDependencyVarBitmasks )
+    {
+        // known ⊆ subMask  → current vars are non-minimal
+        if ( ( known & subMask ) == known )
+            return true;
+    }
+
+    return false;
+}
+
 
 
 void IncrementalConflictAnalyser::notifyNeuronFixed( unsigned newVar, ReLUState state )
@@ -288,40 +358,152 @@ void IncrementalConflictAnalyser::_emitTighteningsForImpliedPhase( unsigned oldV
     }
 }
 
-void IncrementalConflictAnalyser::notifySolvingStarted( unsigned numQueryVariables )
+void IncrementalConflictAnalyser::notifySolvingStarted(
+    unsigned numQueryVariables,
+    const Query *engineQuery,
+    NLR::NetworkLevelReasoner *nlr,
+    BoundManager *boundManager )
 {
-
     ASSERT( _context );
     ASSERT( _preprocessor );
 
+    printf(
+        "[ICA] notifySolvingStarted: numVars=%u, eps=%.6f, reuseAll=%u\n",
+        numQueryVariables,
+        _currentEpsilon,
+        _reuseAllConflicts );
+
+    // --- Set per-solve state (must be null before) ---
+    setEngineQuery( engineQuery );
+    setNetworkLevelReasoner( nlr );
+    setBoundManager( boundManager );
+
+    ASSERT( _engineQuery );
+    ASSERT( _nlr );
+    ASSERT( _boundManager );
+
+    printf(
+        "[ICA]  engineQuery=%p, nlr=%p, boundManager=%p\n",
+        (void *)_engineQuery,
+        (void *)_nlr,
+        (void *)_boundManager );
+
     // Epsilon must be valid
     ASSERT( _currentEpsilon >= 0.0 );
-    if (_bitmaskSize == 0)
-        _bitmaskSize = 2 * numQueryVariables + 3;
 
-    // Bitmask must be large enough to index all variables
-    ASSERT( _bitmaskSize >= 2 * numQueryVariables + 3 );
+    // --- Bitmask initialization ---
+    if ( _bitmaskConflictSize == 0 )
+    {
+        _bitmaskConflictSize = 2 * numQueryVariables + 3;
+        printf(
+            "[ICA]  init conflict bitmask size = %u\n",
+            _bitmaskConflictSize );
+    }
 
+    if ( _bitmaskDependencyVSize == 0 )
+    {
+        _bitmaskDependencyVSize = numQueryVariables + 1;
+        printf(
+            "[ICA]  init dependency-var bitmask size = %u\n",
+            _bitmaskDependencyVSize );
+    }
+
+    ASSERT( _bitmaskConflictSize >= 2 * numQueryVariables + 3 );
+    ASSERT( _bitmaskDependencyVSize >= numQueryVariables + 1 );
+
+    // --- NLR sanity ---
+    const NLR::NetworkLevelReasoner *fromQuery =
+        _engineQuery->getNetworkLevelReasoner();
+    ASSERT( fromQuery );
+    ASSERT( _nlr );
+
+    printf(
+        "[ICA]  NLR check: fromQuery=%p, fromEngine=%p\n",
+        (void *)fromQuery,
+        (void *)_nlr );
+
+    ASSERT( fromQuery == _nlr ); // expected to hold for now
+
+    // --- Conflict reuse path ---
     if ( _reuseAllConflicts )
     {
-        ASSERT (_minimalConflictBitmasks.size() == 0);
+        ASSERT( _minimalConflictBitmasks.empty() );
+        printf( "[ICA]  initializing SAT solver + importing conflicts\n" );
         _initializeSatSolver();
         _importRelevantConflicts();
     }
 
+    // --- Dependency discovery ---
+    printf( "[ICA]  starting dependency calculation\n" );
+    calculateDependencies();
+    printf( "[ICA]  dependency calculation finished\n" );
 }
+
+
+void IncrementalConflictAnalyser::calculateDependencies()
+{
+    ASSERT( _context );
+    ASSERT( _preprocessor );
+
+    // These must have been set by Engine right before notifySolvingStarted()
+    ASSERT( _engineQuery );
+    ASSERT( _nlr );
+    ASSERT( _boundManager );
+
+    DependencyCalculator calc( *this,
+                               _engineQuery,
+                               _nlr,
+                               _preprocessor,
+                               _boundManager );
+
+    calc.run();
+}
+
+void IncrementalConflictAnalyser::setEngineQuery( const Query *q )
+{
+    // Must only be set once per solve
+    ASSERT( _engineQuery == nullptr );
+    ASSERT( q );
+
+    _engineQuery = q;
+}
+
+void IncrementalConflictAnalyser::setNetworkLevelReasoner(
+    NLR::NetworkLevelReasoner *nlr )
+{
+    // Must only be set once per solve
+    ASSERT( _nlr == nullptr );
+    ASSERT( nlr );
+
+    _nlr = nlr;
+}
+
+void IncrementalConflictAnalyser::setBoundManager( BoundManager *bm )
+{
+    // Must only be set once per solve
+    ASSERT( _boundManager == nullptr );
+    ASSERT( bm );
+
+    _boundManager = bm;
+}
+
 
 
 void IncrementalConflictAnalyser::notifySolved()
 {
-
     _currentEpsilon = -1.0;
     _context = nullptr;
     _preprocessor = nullptr;
     _seenPhase = nullptr;
+
+    _engineQuery = nullptr;
+    _nlr = nullptr;
+    _boundManager = nullptr;
+
     if ( _reuseAllConflicts )
     {
         _minimalConflictBitmasks.clear();
+        _minimalDependencyVarBitmasks.clear();
     }
 }
 
@@ -351,7 +533,7 @@ IncrementalConflictAnalyser::_buildConflictBitmask( const std::vector<unsigned> 
                                                    const std::vector<bool> &isActive ) const
 {
     ASSERT( vars.size() == isActive.size() );
-    DependencyAnalyzer::Bitmask mask( _bitmaskSize );
+    DependencyAnalyzer::Bitmask mask( _bitmaskConflictSize );
 
     for ( unsigned i = 0; i < vars.size(); ++i )
     {
@@ -374,7 +556,7 @@ IncrementalConflictAnalyser::_buildConflictSubBitmask( const std::vector<unsigne
                                                       const std::vector<bool> &isActive ) const
 {
     ASSERT( vars.size() == isActive.size() );
-    DependencyAnalyzer::Bitmask mask( _bitmaskSize );
+    DependencyAnalyzer::Bitmask mask( _bitmaskConflictSize );
 
     for ( unsigned i = 0; i < vars.size(); ++i )
     {
@@ -392,6 +574,92 @@ IncrementalConflictAnalyser::_buildConflictSubBitmask( const std::vector<unsigne
 
     return mask;
 }
+
+// Used by DependencyCalculator BEFORE doing expensive analysis.
+// Prunes supersets of already-known minimal dependency var-sets.
+//
+// Semantics (vars-only):
+//   Let mask represent a candidate dependency variable set (SAT-var indexed).
+//   If we already recorded some known minimal var-set K such that K ⊆ mask,
+//   then this candidate is a superset and we should skip exploring it.
+bool IncrementalConflictAnalyser::_isNonMinimalDependencyVars(
+    const DependencyAnalyzer::Bitmask &mask ) const
+{
+    for ( const auto &known : _minimalDependencyVarBitmasks )
+    {
+        // If known ⊆ mask, then (known & mask) == known
+        if ( ( known & mask ) == known )
+            return true;
+    }
+    return false;
+}
+
+DependencyAnalyzer::Bitmask
+IncrementalConflictAnalyser::_buildDependencyVarsBitmask(
+    const std::vector<unsigned> &vars ) const
+{
+    ASSERT( _bitmaskDependencyVSize > 0 );
+
+    DependencyAnalyzer::Bitmask mask( _bitmaskDependencyVSize );
+
+    for ( unsigned oldVar : vars )
+    {
+        const unsigned satVar = _reluIndexToSatVar( oldVar );
+        ASSERT( satVar != 0 ); // full mask requires full SAT mapping
+
+        ASSERT( satVar < mask.size() );
+        mask.set( satVar );
+    }
+
+    return mask;
+}
+
+
+DependencyAnalyzer::Bitmask
+IncrementalConflictAnalyser::_buildDependencyVarsSubBitmask(
+    const std::vector<unsigned> &vars ) const
+{
+    ASSERT( _bitmaskDependencyVSize > 0 );
+
+    DependencyAnalyzer::Bitmask mask( _bitmaskDependencyVSize );
+
+    for ( unsigned oldVar : vars )
+    {
+        const unsigned satVar = _reluIndexToSatVar( oldVar );
+
+        // Sub-mask: skip vars that are not yet mapped to SAT
+        if ( satVar == 0 )
+            continue;
+
+        ASSERT( satVar < mask.size() );
+        mask.set( satVar );
+    }
+
+    return mask;
+}
+
+void IncrementalConflictAnalyser::_recordMinimalDependencyVars(
+    const std::vector<unsigned> &vars )
+{
+    ASSERT( _bitmaskDependencyVSize > 0 );
+    ASSERT( vars.size() > 0 );
+
+    // Build full dependency-var bitmask (vars only, no polarity)
+    DependencyAnalyzer::Bitmask mask( _bitmaskDependencyVSize );
+
+    for ( unsigned oldVar : vars )
+    {
+        // This assumes we call _reluIndexToSatVarForce(oldVar) before recording.
+        const unsigned satVar = _reluIndexToSatVar( oldVar );
+        ASSERT( satVar != 0 ); // must be mapped before recording
+
+        ASSERT( satVar < mask.size() );
+        mask.set( satVar );
+    }
+
+    _minimalDependencyVarBitmasks.push_back( std::move( mask ) );
+}
+
 
 unsigned IncrementalConflictAnalyser::_reluIndexToSatVar( unsigned relu ) const
 {
@@ -418,7 +686,8 @@ unsigned IncrementalConflictAnalyser::_createNewSatVarForRelu( unsigned relu )
 
     _reluIndexToSatVarMap[relu] = newSatVar;
     _satVarToReluIndexMap.append( relu );
-
+    printf( "[ICA][dep-min] oldVar=%u -> satVar=%u\n",
+            relu, newSatVar );
     return newSatVar;
 }
 
@@ -488,6 +757,7 @@ void IncrementalConflictAnalyser::_importRelevantConflicts()
         if ( eps >= _currentEpsilon )
         {
             _encodeConflictClause( conflict );
+            _encodeMinimalBitmasks( conflict );
             ++imported;
         }
         else
@@ -499,3 +769,58 @@ void IncrementalConflictAnalyser::_importRelevantConflicts()
     printf( "[ICA][IV] _importRelevantConflicts done: imported=%u\n", imported );
 }
 
+void IncrementalConflictAnalyser::_encodeMinimalBitmasks( const Conflict &conflict )
+{
+    ASSERT( _bitmaskConflictSize > 0 );
+    ASSERT( _bitmaskDependencyVSize > 0 );
+
+    const auto &vars     = conflict.getVars();
+    const auto &isActive = conflict.getIsActive();
+
+    ASSERT( vars.size() == isActive.size() );
+
+    if ( vars.empty() )
+        return;
+
+    // --------------------------------------------------
+    // 1) Conflict minimal bitmask (polarity-aware)
+    // --------------------------------------------------
+    {
+        // Sub-mask first (safe even if something odd happens)
+        DependencyAnalyzer::Bitmask subMask =
+            _buildConflictSubBitmask( vars, isActive );
+
+        ASSERT ( !_isNonMinimalConflict( subMask ) );
+        if ( !_isNonMinimalConflict( subMask ) )
+        {
+            DependencyAnalyzer::Bitmask fullMask =
+                _buildConflictBitmask( vars, isActive );
+
+            _minimalConflictBitmasks.push_back( fullMask );
+        }
+    }
+
+    // --------------------------------------------------
+    // 2) Dependency-vars minimal bitmask (vars-only)
+    // --------------------------------------------------
+    {
+        // Build vars-only *sub* mask for pruning
+        DependencyAnalyzer::Bitmask subVarMask( _bitmaskDependencyVSize );
+
+        for ( unsigned oldVar : vars )
+        {
+            const unsigned satVar = _reluIndexToSatVar( oldVar );
+            ASSERT( satVar != 0 ); // must exist after _encodeConflictClause
+            ASSERT( satVar < _bitmaskDependencyVSize );
+            subVarMask.set( satVar );
+        }
+
+        // If not subsumed by an existing minimal var-set, record it
+        ASSERT( !_isNonMinimalDependencyVars( subVarMask ) );
+        if ( !subVarMask.none() && !_isNonMinimalDependencyVars( subVarMask ) )
+        {
+            // IMPORTANT: record by vars, not by mask
+            _recordMinimalDependencyVars( vars );
+        }
+    }
+}

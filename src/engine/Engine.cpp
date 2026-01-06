@@ -37,6 +37,17 @@
 #include "IncrementalConflictAnalyser.h"
 // #include "Dependency.h"
 
+#include "GurobiWrapper.h"
+
+#include "Debug.h"
+#include "FloatUtils.h"
+#include "GlobalConfiguration.h"
+#include "MStringf.h"
+#include "Options.h"
+#include "gurobi_c.h"
+
+#include <iostream>
+
 #include <random>
 
 Engine::Engine()
@@ -220,10 +231,15 @@ bool Engine::solve( double timeoutInSeconds )
         _tableau->setGurobi( &( *_gurobi ) );
         _milpEncoder = std::unique_ptr<MILPEncoder>( new MILPEncoder( *_tableau ) );
         _milpEncoder->setStatistics( &_statistics );
+        printf("Debug #0.56");
+        fflush(stdout); 
         _milpEncoder->encodeQuery( *_gurobi, *_preprocessedQuery, true );
         ENGINE_LOG( "Encoding convex relaxation into Gurobi - done" );
+        fflush(stdout); 
+        printf("Debug #0.57");
     }
-
+    printf("Debug #0.6");
+        fflush(stdout); 
     mainLoopStatistics();
     if ( _verbosity > 0 )
     {
@@ -231,6 +247,8 @@ bool Engine::solve( double timeoutInSeconds )
         _statistics.print();
         printf( "\n---\n" );
     }
+    printf("Debug #0.3");
+    fflush(stdout); 
 
 
     // --- incremental ---
@@ -251,8 +269,16 @@ bool Engine::solve( double timeoutInSeconds )
 
     bool splitJustPerformed = true;
     if ( _incrementalMode )
-        _incrementalConflictAnalyser->notifySolvingStarted( _preprocessedQuery->getNumberOfVariables() );
-    
+    {
+        ASSERT( _preprocessedQuery );
+        ASSERT( _preprocessedQuery->getNetworkLevelReasoner() );
+        _incrementalConflictAnalyser->notifySolvingStarted(
+            _preprocessedQuery->getNumberOfVariables(),
+            _preprocessedQuery.get(),
+            _preprocessedQuery->getNetworkLevelReasoner(),
+            &_boundManager );
+    }
+
     struct timespec mainLoopStart = TimeUtils::sampleMicro();
     while ( true )
     {        
