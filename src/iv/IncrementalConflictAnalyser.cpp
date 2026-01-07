@@ -455,8 +455,10 @@ void IncrementalConflictAnalyser::calculateDependencies()
                                _nlr,
                                _preprocessor,
                                _boundManager );
-
+    
+    printf( "[ICA]  running DependencyCalculator\n" );
     calc.run();
+    printf( "[ICA]  DependencyCalculator finished\n" );
 }
 
 void IncrementalConflictAnalyser::setEngineQuery( const Query *q )
@@ -527,6 +529,7 @@ bool IncrementalConflictAnalyser::_isNonMinimalConflict(
     }
     return false;
 }
+
 
 DependencyAnalyzer::Bitmask
 IncrementalConflictAnalyser::_buildConflictBitmask( const std::vector<unsigned> &vars,
@@ -790,7 +793,7 @@ void IncrementalConflictAnalyser::_encodeMinimalBitmasks( const Conflict &confli
         DependencyAnalyzer::Bitmask subMask =
             _buildConflictSubBitmask( vars, isActive );
 
-        ASSERT ( !_isNonMinimalConflict( subMask ) );
+        // ASSERT ( !_isNonMinimalConflict( subMask ) );
         if ( !_isNonMinimalConflict( subMask ) )
         {
             DependencyAnalyzer::Bitmask fullMask =

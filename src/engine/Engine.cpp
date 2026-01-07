@@ -231,15 +231,9 @@ bool Engine::solve( double timeoutInSeconds )
         _tableau->setGurobi( &( *_gurobi ) );
         _milpEncoder = std::unique_ptr<MILPEncoder>( new MILPEncoder( *_tableau ) );
         _milpEncoder->setStatistics( &_statistics );
-        printf("Debug #0.56");
-        fflush(stdout); 
         _milpEncoder->encodeQuery( *_gurobi, *_preprocessedQuery, true );
         ENGINE_LOG( "Encoding convex relaxation into Gurobi - done" );
-        fflush(stdout); 
-        printf("Debug #0.57");
     }
-    printf("Debug #0.6");
-        fflush(stdout); 
     mainLoopStatistics();
     if ( _verbosity > 0 )
     {
@@ -247,8 +241,6 @@ bool Engine::solve( double timeoutInSeconds )
         _statistics.print();
         printf( "\n---\n" );
     }
-    printf("Debug #0.3");
-    fflush(stdout); 
 
 
     // --- incremental ---
@@ -281,7 +273,8 @@ bool Engine::solve( double timeoutInSeconds )
 
     struct timespec mainLoopStart = TimeUtils::sampleMicro();
     while ( true )
-    {        
+    {  
+        fflush(stdout);       
         struct timespec mainLoopEnd = TimeUtils::sampleMicro();
         _statistics.incLongAttribute( Statistics::TIME_MAIN_LOOP_MICRO,
                                       TimeUtils::timePassed( mainLoopStart, mainLoopEnd ) );

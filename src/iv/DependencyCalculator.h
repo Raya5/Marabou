@@ -3,6 +3,8 @@
 
 #include <vector>
 #include <memory>
+#include "Vector.h"
+#include "GurobiWrapper.h"
 
 class Query;
 class Preprocessor;
@@ -19,16 +21,27 @@ class Dependency;
 class DependencyCalculator
 {
 public:
+
+    struct LayerDepStats
+    {
+        unsigned layerIndex = 0;        // NLR layer index
+        unsigned wsOrdinal = 0;         // 0 for first WS layer, 1 for second, ...
+        unsigned unstableCount = 0;
+        unsigned depsFound = 0;
+        double secondsSpent = 0.0;
+    };
+
     struct Stats
     {
         unsigned numLayersVisited = 0;
         unsigned numWeightedSumLayers = 0;
 
-        unsigned totalUnstable = 0;        // sum over layers (as observed)
-        unsigned totalCandidates = 0;      // e.g., number of tested pairs (optional)
-        unsigned totalDependencies = 0;    // dependencies confirmed
+        unsigned totalUnstable = 0;
+        unsigned totalCandidates = 0;
+        unsigned totalDependencies = 0;
+        unsigned totalPruned = 0;
 
-        // Per-layer reporting can be printed directly or collected here later if you want.
+        std::vector<LayerDepStats> perWsLayer;  // one entry per WEIGHTED_SUM layer
     };
 
     /*
@@ -88,6 +101,16 @@ private:
     void _assertNlrConsistency() const;
     void _assertBoundsConsistencyForVar( unsigned newVar ) const; // optional: query vs BM
 
+    // ---- Bounds and slicing helpers ---- 
+    void _getLayerBounds( const NLR::Layer *layer, Vector<double> &lowerBounds, Vector<double> &upperBounds ) const;
+    void _boxMinMax( const Vector<double> &a, double b, const Vector<double> &L, const Vector<double> &U, double &outMin, double &outMax ) const;
+    void _sliceMinMax_givenOtherZero( const Vector<double> &w_t, double b_t, const Vector<double> &w_o, double b_o, const Vector<double> &L, const Vector<double> &U, double &outMin, double &outMax ) const;
+
+    // ---- Gurobi / LP slicing (only if you want k>=3 working) ---- 
+    void _sliceMinMax_givenMEqZero_LP( const Vector<double> &w_t, double b_t, const Vector<Vector<double>> &w_eq, const Vector<double> &b_eq, const Vector<double> &L, const Vector<double> &U, double &outMin, double &outMax ) const;
+    bool _lpSliceMEqMinMax( const Vector<double> &w_t, double b_t, const Vector<Vector<double>> &w_eq, const Vector<double> &b_eq, const Vector<double> &L, const Vector<double> &U, double &outMin, double &outMax ) const;
+    void _buildLpSliceModelMEq( GurobiWrapper &lp, const Vector<Vector<double>> &w_eq, const Vector<double> &b_eq, const Vector<double> &L, const Vector<double> &U, Vector<String> &varNames ) const;
+        
 private:
     IncrementalConflictAnalyser &_ica;
 
@@ -99,6 +122,10 @@ private:
     BoundManager *_boundManager;                       // optional sanity
 
     std::vector<Dependency> _dependencies;
+
+    mutable GurobiWrapper _lpReusable;
+    mutable bool _lpReusableInitialized;
+
     Stats _stats;
 };
 
