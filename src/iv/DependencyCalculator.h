@@ -5,6 +5,7 @@
 #include <memory>
 #include "Vector.h"
 #include "GurobiWrapper.h"
+#include <chrono>
 
 class Query;
 class Preprocessor;
@@ -42,6 +43,18 @@ public:
         unsigned totalPruned = 0;
 
         std::vector<LayerDepStats> perWsLayer;  // one entry per WEIGHTED_SUM layer
+
+        // “layer_1 / layer_2” = first/second WEIGHTED_SUM layer encountered
+        bool hasWs1 = false;
+        unsigned ws1_unstable = 0;
+        unsigned ws1_depsFound = 0;
+        double ws1_seconds = 0.0;
+
+        bool hasWs2 = false;
+        unsigned ws2_unstable = 0;
+        unsigned ws2_depsFound = 0;
+        double ws2_seconds = 0.0;
+
     };
 
     /*
@@ -127,6 +140,11 @@ private:
     mutable bool _lpReusableInitialized;
 
     Stats _stats;
+
+    std::chrono::steady_clock::time_point _deadline;
+    bool _hasTimeLimit = false;
+
+    bool _timeExceeded() const;
 };
 
 #endif // __DependencyCalculator_h__

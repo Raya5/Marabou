@@ -37,9 +37,24 @@ DependencyCalculator::DependencyCalculator( IncrementalConflictAnalyser &ica,
 void DependencyCalculator::run()
 {
     _assertNlrConsistency();
+
+    const double timeLimitSeconds = 30;
+
+    _hasTimeLimit = true;
+    _deadline = std::chrono::steady_clock::now() +
+                std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                    std::chrono::duration<double>( timeLimitSeconds ) );
+
     _scanAllLayers();
 }
 
+bool DependencyCalculator::_timeExceeded() const
+{
+    if ( !_hasTimeLimit )
+        return false;
+
+    return std::chrono::steady_clock::now() > _deadline;
+}
 
 const DependencyCalculator::Stats &DependencyCalculator::getStats() const
 {
@@ -68,6 +83,12 @@ void DependencyCalculator::_scanAllLayers()
 
     for ( unsigned layerIndex = 0; layerIndex < numLayers; ++layerIndex )
     {
+        if ( _timeExceeded() )
+        {
+            printf("[DepCalc] time limit reached, stopping layer scan\n");
+            return;
+        }
+
         const NLR::Layer *layer = _nlrEngine->getLayer( layerIndex );
         if ( !layer )
         {
@@ -86,7 +107,7 @@ void DependencyCalculator::_scanAllLayers()
 
     }
 
-    printf( "[DepCalc] done: weightedSumLayers=%u\n",
+    printf( "[DepCalc] done sacaning %u weightedSumLayers.\n",
             _stats.numWeightedSumLayers );
 }
 
@@ -97,19 +118,51 @@ void DependencyCalculator::_scanWeightedSumLayer( unsigned layerIndex )
     ASSERT( _nlrEngine );
 
     const NLR::Layer *layer = _nlrEngine->getLayer( layerIndex );
-    if ( !layer )
-        return;
+    ASSERT( layer );
+    ASSERT( layer->getLayerType() == NLR::Layer::WEIGHTED_SUM );
 
-    if ( layer->getLayerType() != NLR::Layer::WEIGHTED_SUM )
-        return;
+    const unsigned wsOrdinal = _stats.numWeightedSumLayers; 
 
     std::vector<unsigned> unstable;
     _collectUnstableNeurons( layerIndex, unstable );
     
     _stats.totalUnstable += unstable.size();
-    printf( "[DC] layer=%u unstable=%zu\n", layerIndex, unstable.size() );
 
+
+    LayerDepStats ls;
+    ls.layerIndex = layerIndex;
+    ls.wsOrdinal = wsOrdinal;
+    ls.unstableCount = unstable.size();
+    const unsigned depsBefore = _stats.totalDependencies;
+
+
+    const auto t0 = std::chrono::steady_clock::now();
     _enumeratePairs( layerIndex, unstable );
+    const auto t1 = std::chrono::steady_clock::now();
+
+    const unsigned depsAfter = _stats.totalDependencies;
+    ls.depsFound = depsAfter - depsBefore;
+
+    ls.secondsSpent =
+        std::chrono::duration<double>( t1 - t0 ).count();
+
+    _stats.perWsLayer.push_back( ls );
+
+    if ( ls.wsOrdinal == 1 )
+    {
+        _stats.hasWs1 = true;
+        _stats.ws1_unstable = ls.unstableCount;
+        _stats.ws1_depsFound = ls.depsFound;
+        _stats.ws1_seconds = ls.secondsSpent;
+    }
+    else if ( ls.wsOrdinal == 2 )
+    {
+        _stats.hasWs2 = true;
+        _stats.ws2_unstable = ls.unstableCount;
+        _stats.ws2_depsFound = ls.depsFound;
+        _stats.ws2_seconds = ls.secondsSpent;
+    }
+
 }
 
 
@@ -176,6 +229,9 @@ void DependencyCalculator::_enumeratePairs( unsigned layerIndex,
     {
         for ( size_t j = i + 1; j < unstableNeurons.size(); ++j )
         {
+            if ( _timeExceeded() )
+                return;
+
             const unsigned n0 = unstableNeurons[i];
             const unsigned n1 = unstableNeurons[j];
 
@@ -213,12 +269,12 @@ void DependencyCalculator::_enumeratePairs( unsigned layerIndex,
             Dependency dep;
             if ( _analyzeNeuronSet( layerIndex, neurons, dep ) )
             {
-                printf( "[DC] layer=%u found dep oldVars=(%u,%u) forbid=(%u,%u)\n",
-                        layerIndex,
-                        dep.getVars()[0],
-                        dep.getVars()[1],
-                        static_cast<unsigned>( dep.getStates()[0] ),
-                        static_cast<unsigned>( dep.getStates()[1] ) );
+                // printf( "[DC] layer=%u found dep oldVars=(%u,%u) forbid=(%u,%u)\n",
+                //         layerIndex,
+                //         dep.getVars()[0],
+                //         dep.getVars()[1],
+                //         static_cast<unsigned>( dep.getStates()[0] ),
+                //         static_cast<unsigned>( dep.getStates()[1] ) );
                 _stats.totalDependencies++;
                 depPairCount++;
 

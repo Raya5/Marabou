@@ -47,6 +47,12 @@ Statistics::Statistics()
     _unsignedAttributes[CERTIFIED_UNSAT] = 0;
     _unsignedAttributes[NUM_INCREMENTAL_TIGHTENINGS] = 0;
 
+    // Dependency calculation stats
+    _unsignedAttributes[UNSTABLE_NEURONS_WS1] = 0;
+    _unsignedAttributes[FOUND_DEPS_WS1] = 0;
+    _unsignedAttributes[UNSTABLE_NEURONS_WS2] = 0;
+    _unsignedAttributes[FOUND_DEPS_WS2] = 0;
+
     _longAttributes[NUM_MAIN_LOOP_ITERATIONS] = 0;
     _longAttributes[NUM_SIMPLEX_STEPS] = 0;
     _longAttributes[TIME_SIMPLEX_STEPS_MICRO] = 0;
@@ -102,6 +108,10 @@ Statistics::Statistics()
     _doubleAttributes[MAX_DEGRADATION] = 0.0;
     _doubleAttributes[COST_OF_CURRENT_PHASE_PATTERN] = FloatUtils::infinity();
     _doubleAttributes[MIN_COST_OF_PHASE_PATTERN] = FloatUtils::infinity();
+
+    // Dependency calculation time (first/second WEIGHTED_SUM layers encountered)
+    _doubleAttributes[SECONDS_TO_FIND_WS1_DEPS] = 0.0;
+    _doubleAttributes[SECONDS_TO_FIND_WS2_DEPS] = 0.0;
 }
 
 void Statistics::stampStartingTime()

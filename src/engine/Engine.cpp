@@ -268,7 +268,8 @@ bool Engine::solve( double timeoutInSeconds )
             _preprocessedQuery->getNumberOfVariables(),
             _preprocessedQuery.get(),
             _preprocessedQuery->getNetworkLevelReasoner(),
-            &_boundManager );
+            &_boundManager,
+            &_statistics );
     }
 
     struct timespec mainLoopStart = TimeUtils::sampleMicro();

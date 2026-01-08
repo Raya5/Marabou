@@ -78,6 +78,12 @@ public:
 
         // For incremental solving: number of tightenings
         NUM_INCREMENTAL_TIGHTENINGS,
+
+        // Dependency calculation stats (first/second WEIGHTED_SUM layers encountered)
+        UNSTABLE_NEURONS_WS1,
+        FOUND_DEPS_WS1,
+        UNSTABLE_NEURONS_WS2,
+        FOUND_DEPS_WS2,
     };
 
     enum StatisticsLongAttribute {
@@ -232,6 +238,11 @@ public:
         // How close we are to the minimum of the SoI (0).
         COST_OF_CURRENT_PHASE_PATTERN,
         MIN_COST_OF_PHASE_PATTERN,
+
+        // Dependency calculation time in seconds (first/second WEIGHTED_SUM layers encountered)
+        SECONDS_TO_FIND_WS1_DEPS,
+        SECONDS_TO_FIND_WS2_DEPS,
+
     };
 
     /*

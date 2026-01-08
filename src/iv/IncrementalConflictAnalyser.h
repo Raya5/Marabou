@@ -7,6 +7,7 @@
 #include "Conflict.h"
 #include "DependencyAnalyzer.h"   // for Bitmask, ReLURuntimeState, etc.
 #include "Preprocessor.h"
+#include "Statistics.h"
 
 #include "cadical.hpp"
 
@@ -91,11 +92,14 @@ public:
     void notifySolvingStarted( unsigned numQueryVariables,
                             const Query *engineQuery,
                             NLR::NetworkLevelReasoner *nlr,
-                            BoundManager *boundManager );
+                            BoundManager *boundManager,
+                            Statistics *statistics );
 
     void setEngineQuery( const Query *q );
     void setNetworkLevelReasoner( NLR::NetworkLevelReasoner *nlr );
     void setBoundManager( BoundManager *bm );
+    void setStatistics( Statistics *statistics );
+
     bool isNonMinimalDependencyVarsSubMask(const std::vector<unsigned> &vars ) const;
 
     /*
@@ -251,6 +255,15 @@ private:
     const Query *_engineQuery;                 // current preprocessed query (Engine-owned)
     NLR::NetworkLevelReasoner *_nlr;     // borrowed from _engineQuery
     BoundManager *_boundManager;               // optional sanity
+    Statistics *_statistics;
+    
+    // Stats collected from DependencyCalculator
+    unsigned _ws1_unstable = 0, _ws1_depsFound = 0;
+    double _ws1_seconds = 0.0;
+
+    unsigned _ws2_unstable = 0, _ws2_depsFound = 0;
+    double _ws2_seconds = 0.0;
+
 
 };
 

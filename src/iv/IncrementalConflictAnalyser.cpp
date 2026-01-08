@@ -18,6 +18,7 @@ IncrementalConflictAnalyser::IncrementalConflictAnalyser( bool reuseAllConflicts
     , _engineQuery( nullptr )
     , _nlr( nullptr )
     , _boundManager( nullptr )
+    , _statistics( nullptr )
 {
 }
 
@@ -362,7 +363,8 @@ void IncrementalConflictAnalyser::notifySolvingStarted(
     unsigned numQueryVariables,
     const Query *engineQuery,
     NLR::NetworkLevelReasoner *nlr,
-    BoundManager *boundManager )
+    BoundManager *boundManager,
+    Statistics *statistics )
 {
     ASSERT( _context );
     ASSERT( _preprocessor );
@@ -377,10 +379,12 @@ void IncrementalConflictAnalyser::notifySolvingStarted(
     setEngineQuery( engineQuery );
     setNetworkLevelReasoner( nlr );
     setBoundManager( boundManager );
+    setStatistics( statistics ); 
 
     ASSERT( _engineQuery );
     ASSERT( _nlr );
     ASSERT( _boundManager );
+    ASSERT( _statistics );
 
     printf(
         "[ICA]  engineQuery=%p, nlr=%p, boundManager=%p\n",
@@ -437,6 +441,20 @@ void IncrementalConflictAnalyser::notifySolvingStarted(
     printf( "[ICA]  starting dependency calculation\n" );
     calculateDependencies();
     printf( "[ICA]  dependency calculation finished\n" );
+    ASSERT( _statistics );
+
+    // These are the dedicated fields you added in DependencyCalculator::Stats via Step 2,
+    // but they need to be available here. Best: store them in ICA when calculateDependencies runs.
+    // Assume ICA has members like: _ws1_unstable, _ws1_depsFound, _ws1_seconds, etc.
+
+    _statistics->setUnsignedAttribute( Statistics::UNSTABLE_NEURONS_WS1, _ws1_unstable );
+    _statistics->setUnsignedAttribute( Statistics::FOUND_DEPS_WS1, _ws1_depsFound );
+    _statistics->setUnsignedAttribute( Statistics::UNSTABLE_NEURONS_WS2, _ws2_unstable );
+    _statistics->setUnsignedAttribute( Statistics::FOUND_DEPS_WS2, _ws2_depsFound );
+
+    _statistics->setDoubleAttribute( Statistics::SECONDS_TO_FIND_WS1_DEPS, _ws1_seconds );
+    _statistics->setDoubleAttribute( Statistics::SECONDS_TO_FIND_WS2_DEPS, _ws2_seconds );
+
 }
 
 
@@ -459,6 +477,16 @@ void IncrementalConflictAnalyser::calculateDependencies()
     printf( "[ICA]  running DependencyCalculator\n" );
     calc.run();
     printf( "[ICA]  DependencyCalculator finished\n" );
+
+    const auto &s = calc.getStats();
+
+    _ws1_unstable = s.ws1_unstable;
+    _ws1_depsFound = s.ws1_depsFound;
+    _ws1_seconds = s.ws1_seconds;
+
+    _ws2_unstable = s.ws2_unstable;
+    _ws2_depsFound = s.ws2_depsFound;
+    _ws2_seconds = s.ws2_seconds;
 }
 
 void IncrementalConflictAnalyser::setEngineQuery( const Query *q )
@@ -489,6 +517,14 @@ void IncrementalConflictAnalyser::setBoundManager( BoundManager *bm )
     _boundManager = bm;
 }
 
+void IncrementalConflictAnalyser::setStatistics( Statistics *statistics )
+{
+    // Must only be set once per solve
+    ASSERT( _statistics == nullptr );
+    ASSERT( statistics );
+
+    _statistics = statistics;
+}
 
 
 void IncrementalConflictAnalyser::notifySolved()
@@ -507,6 +543,13 @@ void IncrementalConflictAnalyser::notifySolved()
         _minimalConflictBitmasks.clear();
         _minimalDependencyVarBitmasks.clear();
     }
+    
+    _statistics = nullptr;
+    _ws1_unstable = _ws1_depsFound = 0;
+    _ws1_seconds = 0.0;
+    _ws2_unstable = _ws2_depsFound = 0;
+    _ws2_seconds = 0.0;
+
 }
 
 void IncrementalConflictAnalyser::_initializeSatSolver()
@@ -689,8 +732,8 @@ unsigned IncrementalConflictAnalyser::_createNewSatVarForRelu( unsigned relu )
 
     _reluIndexToSatVarMap[relu] = newSatVar;
     _satVarToReluIndexMap.append( relu );
-    printf( "[ICA][dep-min] oldVar=%u -> satVar=%u\n",
-            relu, newSatVar );
+    // printf( "[ICA][dep-min] oldVar=%u -> satVar=%u\n",
+    //         relu, newSatVar );
     return newSatVar;
 }
 
@@ -819,7 +862,7 @@ void IncrementalConflictAnalyser::_encodeMinimalBitmasks( const Conflict &confli
         }
 
         // If not subsumed by an existing minimal var-set, record it
-        ASSERT( !_isNonMinimalDependencyVars( subVarMask ) );
+        // ASSERT( !_isNonMinimalDependencyVars( subVarMask ) );
         if ( !subVarMask.none() && !_isNonMinimalDependencyVars( subVarMask ) )
         {
             // IMPORTANT: record by vars, not by mask

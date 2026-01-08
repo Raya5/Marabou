@@ -946,6 +946,12 @@ PYBIND11_MODULE( MarabouCore, m )
                 Statistics::StatisticsUnsignedAttribute::NUM_ACTIVE_PL_CONSTRAINTS )
         .value( "NUM_INCREMENTAL_TIGHTENINGS",
                 Statistics::StatisticsUnsignedAttribute::NUM_INCREMENTAL_TIGHTENINGS )
+        .value( "UNSTABLE_NEURONS_WS1",
+                Statistics::StatisticsUnsignedAttribute::UNSTABLE_NEURONS_WS1 )
+        .value( "FOUND_DEPS_WS1", Statistics::StatisticsUnsignedAttribute::FOUND_DEPS_WS1 )
+        .value( "UNSTABLE_NEURONS_WS2",
+                Statistics::StatisticsUnsignedAttribute::UNSTABLE_NEURONS_WS2 )
+        .value( "FOUND_DEPS_WS2", Statistics::StatisticsUnsignedAttribute::FOUND_DEPS_WS2 )
         .export_values();
     py::enum_<Statistics::StatisticsLongAttribute>( m, "StatisticsLongAttribute" )
         .value( "NUM_TIGHTENINGS_FROM_EXPLICIT_BASIS",
@@ -1036,6 +1042,10 @@ PYBIND11_MODULE( MarabouCore, m )
     py::enum_<Statistics::StatisticsDoubleAttribute>( m, "StatisticsDoubleAttribute" )
         .value( "MAX_DEGRADATION", Statistics::StatisticsDoubleAttribute::MAX_DEGRADATION )
         .value( "CURRENT_DEGRADATION", Statistics::StatisticsDoubleAttribute::CURRENT_DEGRADATION )
+        .value( "SECONDS_TO_FIND_WS1_DEPS",
+                Statistics::StatisticsDoubleAttribute::SECONDS_TO_FIND_WS1_DEPS )
+        .value( "SECONDS_TO_FIND_WS2_DEPS",
+                Statistics::StatisticsDoubleAttribute::SECONDS_TO_FIND_WS2_DEPS )
         .export_values();
     py::class_<Statistics>( m, "Statistics" )
         .def( "getUnsignedAttribute", &Statistics::getUnsignedAttribute )
