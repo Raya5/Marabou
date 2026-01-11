@@ -133,11 +133,6 @@ void SearchTreeHandler::performSplit()
 {
     ASSERT( _needToSplit );
 
-    // String split_info;
-    // _constraintForSplitting->dump(split_info);
-    // printf("Split Info: %s", split_info.ascii());
-
-
     _numRejectedPhasePatternProposal = 0;
     // Maybe the constraint has already become inactive - if so, ignore
     if ( !_constraintForSplitting->isActive() )
@@ -544,6 +539,7 @@ bool SearchTreeHandler::splitAllowsStoredSolution( const PiecewiseLinearCaseSpli
 
 const List<PiecewiseLinearCaseSplit> &SearchTreeHandler::getImpliedValidSplitsAtRoot() const
 {
+    ASSERT( false ); // Is this reached? //TODO: delete this function if not
     return _impliedValidSplitsAtRoot;
 }
 

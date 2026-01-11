@@ -33,9 +33,7 @@
 #include "VariableOutOfBoundDuringOptimizationException.h"
 #include "Vector.h"
 // --- incremental ---
-// #include "DependencyAnalyzer.h"
 #include "IncrementalConflictAnalyser.h"
-// #include "Dependency.h"
 
 #include <random>
 
@@ -77,7 +75,6 @@ Engine::Engine()
     , _groundBoundManager( _context )
     , _UNSATCertificate( NULL )
     , _incrementalMode( Options::get()->getBool( Options::INCREMENTAL_MODE ) )
-    // , _dependencyAnalyzer( NULL )
     , _incrementalConflictAnalyser( NULL )
 {
     _searchTreeHandler.setStatistics( &_statistics );
@@ -245,7 +242,7 @@ bool Engine::solve( double timeoutInSeconds )
 
         _boundManager.setIncrementalConflictAnalyser( _incrementalConflictAnalyser );
     } else if ( Options::get()->getBool( Options::INCREMENTAL_MODE ) ) {
-        printf( "[Engine] Incremental mode enabled (no analyzer attached)\n" );
+        throw MarabouError( MarabouError::DEBUGGING_ERROR, "Engine::solve: Incremental mode set but no incremental conflict analyser attached to engine." );
     }
 
     bool splitJustPerformed = true;
@@ -312,7 +309,6 @@ bool Engine::solve( double timeoutInSeconds )
                 if ( _tableau->basisMatrixAvailable() )
                 {
                     explicitBasisBoundTightening();
-                    // DA hook
                     _boundManager.propagateTightenings();
                     applyAllValidConstraintCaseSplits();
                 }
@@ -322,7 +318,6 @@ bool Engine::solve( double timeoutInSeconds )
             if ( splitJustPerformed )
             {
                 performBoundTighteningAfterCaseSplit();
-                // DA hook
                 if ( _incrementalMode )
                 {
                     applyIncrementalConflictAnalyserTightenings();
@@ -2140,9 +2135,8 @@ void Engine::applySplit( const PiecewiseLinearCaseSplit &split )
                 _groundBoundManager.addGroundBound( variable, bound._value, Tightening::LB, true );
                 _boundManager.tightenLowerBound( variable, bound._value );
             }
-            else if ( !_produceUNSATProofs ){
+            else if ( !_produceUNSATProofs )
                 _boundManager.tightenLowerBound( variable, bound._value );
-            }
         }
         else
         {
@@ -2155,14 +2149,13 @@ void Engine::applySplit( const PiecewiseLinearCaseSplit &split )
                 _groundBoundManager.addGroundBound( variable, bound._value, Tightening::UB, true );
                 _boundManager.tightenUpperBound( variable, bound._value );
             }
-            else if ( !_produceUNSATProofs ){
+            else if ( !_produceUNSATProofs )
                 _boundManager.tightenUpperBound( variable, bound._value );
-            }
         }
     }
     
     if ( _produceUNSATProofs && _UNSATCertificateCurrentPointer )
-    ( **_UNSATCertificateCurrentPointer ).setVisited();
+        ( **_UNSATCertificateCurrentPointer ).setVisited();
 
     DEBUG( _tableau->verifyInvariants() );
     ENGINE_LOG( "Done with split\n" );
@@ -2226,7 +2219,7 @@ bool Engine::applyValidConstraintCaseSplit( PiecewiseLinearConstraint *constrain
     if ( constraint->isActive() && constraint->phaseFixed() )
     {
         String constraintString;
-        // constraint->dump( constraintString );
+        constraint->dump( constraintString );
         ENGINE_LOG( Stringf( "A constraint has become valid. Dumping constraint: %s",
                              constraintString.ascii() )
                         .ascii() );
@@ -3032,34 +3025,13 @@ bool Engine::restoreSearchTreeState( SearchTreeState &searchTreeState )
         if ( _produceUNSATProofs )
             explainSimplexFailure();
 
-        // --- BEGIN: print decision trail for UNSAT leaf ---
         {
-            ASSERT(false); // Not implementing incremental / dependecies here yet.
-            List<PiecewiseLinearCaseSplit> splits;
-            _searchTreeHandler.allDecisionSplitsSoFar( splits );
-
-            printf( "\n[UNSAT LEAF *OTHER ONE*] Decision trail (%u splits):\n",
-                    splits.size() );
-
-            unsigned idx = 0;
-            for ( const auto &split : splits )
+            if ( _incrementalMode )
             {
-                printf( "  [%u] ", idx++ );
-
-                // Option 1: lightweight summary
-                printf( "bounds=%u, equations=%u\n",
-                        split.getBoundTightenings().size(),
-                        split.getEquations().size() );
-
-                // Option 2 (optional, verbose): full dump
-                // String dump;
-                // split.dump( dump );
-                // printf( "%s\n", dump.ascii() );
+                throw MarabouError( MarabouError::DEBUGGING_ERROR );
+                ASSERT(false); // Not implementing incremental here yet.
             }
-
-            printf( "[END UNSAT TRAIL]\n\n" );
         }
-        // --- END: print decision trail ---
 
         if ( !_searchTreeHandler.popSplit() )
         {
@@ -4146,16 +4118,6 @@ Engine::analyseExplanationDependencies( const SparseUnsortedList &explanation,
 
 
 // --- incremental ---
-// void Engine::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer ) 
-// {
-//     _dependencyAnalyzer = dependencyAnalyzer;
-
-// }
-// std::shared_ptr<DependencyAnalyzer> Engine::getDependencyAnalyzer() const 
-// { 
-//     return _dependencyAnalyzer; 
-// }
-
 void Engine::setIncrementalConflictAnalyser(
     std::shared_ptr<IncrementalConflictAnalyser> incrementalConflictAnalyser )
 {
@@ -4167,94 +4129,6 @@ Engine::getIncrementalConflictAnalyser() const
 {
     return _incrementalConflictAnalyser;
 }
-
-// void Engine::applyDependencyAnalyzerTightenings()
-// {
-//     ASSERT( false && "silencing this for now")
-//     ASSERT( _incrementalMode );
-//     ASSERT( _dependencyAnalyzer );
-//     ASSERT( _lpSolverType == LPSolverType::NATIVE || _lpSolverType == LPSolverType::GUROBI );
-//     ASSERT( !_produceUNSATProofs ); // incremental and UNSAT proofs assumed mutually exclusive
-
-//     // _dependencyRequestsCounter++;
-
-//     // if ( _dependencyRequestsCounter < 2 )
-//     // {
-//     //     return;
-//     // }
-//     // bool calculateDependencies =  _dependencyRequestsCounter == 2;
-
-
-//     /*
-//       Ask the DependencyAnalyzer for implied tightenings.
-
-//       There are currently two implementations:
-
-//         - getImpliedTightenings(...)          // legacy, based on direct dependency reasoning
-//         - getImpliedTighteningsFromSat(...)   // new, SAT-based using CaDiCaL
-
-//       We use the SAT-based version by default. The legacy version is kept
-//       around for debugging / comparison and can be re-enabled if needed.
-//     */
-//     List<Tightening> tightenings;
-//     bool noConflict = _dependencyAnalyzer->getImpliedTighteningsFromSat( tightenings, false );
-//     // printf("Called getImpliedTighteningsFromSat with calculateDependencies=%u because _dependencyRequestsCounter is %u\n",
-//     //        calculateDependencies, _dependencyRequestsCounter);
-//     if ( !noConflict )
-//     {
-//         printf( "[Engine][IV] applyDependencyAnalyzerTightenings: detected conflict from DA\n" );
-//         throw InfeasibleQueryException();
-//     }
-//     printf( "[Engine][IV] applyDependencyAnalyzerTightenings: %u tightenings\n",
-//             tightenings.size() );
-            
-//     if ( tightenings.empty() )
-//     {
-//         return;
-//     }
-//     _statistics.incUnsignedAttribute( Statistics::NUM_INCREMENTAL_TIGHTENINGS,
-//                                   tightenings.size() );
-
-//     for ( const auto &tightening : tightenings )
-//     {
-//         const unsigned engineVar  = tightening._variable;                          // variable id as seen by Engine / BoundManager
-//         const unsigned tableauVar = _tableau->getVariableAfterMerging( engineVar ); // after merging in the tableau
-
-//         const double currentLb = _boundManager.getLowerBound( engineVar );
-//         const double currentUb = _boundManager.getUpperBound( engineVar );
-
-//         if ( tightening._type == Tightening::LB )
-//         {
-//             const double newLb = tightening._value;
-
-//             // Safety: new LB must not exceed current UB
-//             // ASSERT( !FloatUtils::gt( newLb, currentUb ) ); // Can heppen, means unsat query
-//             // The analyzer should not emit strictly worse LBs
-//             // printf( "Tightening LB of x%u from %.6f to %.6f\n", engineVar, currentLb, newLb );
-//             ASSERT( !FloatUtils::lt( newLb, currentLb ) );
-
-//             _boundManager.tightenLowerBound( tableauVar, newLb );
-
-//         }
-//         else if ( tightening._type == Tightening::UB )
-//         {
-//             const double newUb = tightening._value;
-
-//             // Safety: new UB must not go below current LB
-//             // ASSERT( !FloatUtils::lt( newUb, currentLb ) ); // Can heppen, means unsat query
-//             // The analyzer should not emit strictly worse UBs
-//             ASSERT( !FloatUtils::gt( newUb, currentUb ) );
-
-//             _boundManager.tightenUpperBound( tableauVar, newUb );
-
-//         }
-//         else
-//         {
-//             // Tightening type must be LB or UB
-//             ASSERT( false );
-//         }
-//     }
-// }
 
 void Engine::recordConflictFromCurrentDecisions()
 {

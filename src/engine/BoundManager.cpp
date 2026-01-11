@@ -20,7 +20,6 @@
 #include "MarabouError.h"
 #include "Tableau.h"
 #include "Tightening.h"
-#include "DependencyAnalyzer.h"
 #include "IncrementalConflictAnalyser.h"
 
 using namespace CVC4::context;
@@ -189,10 +188,6 @@ bool BoundManager::setLowerBound( unsigned variable, double value )
         if ( !consistentBounds( variable ) )
             recordInconsistentBound( variable, value, Tightening::LB );
 
-        if ( _dependencyAnalyzer )
-        {
-            _dependencyAnalyzer->notifyLowerBoundUpdate( variable, oldLb, value );
-        }
         if ( _incrementalConflictAnalyser )
         {
             _incrementalConflictAnalyser->notifyUpperBoundUpdate( variable, oldLb, value );
@@ -217,10 +212,6 @@ bool BoundManager::setUpperBound( unsigned variable, double value )
         if ( !consistentBounds( variable ) )
             recordInconsistentBound( variable, value, Tightening::UB );
 
-        if ( _dependencyAnalyzer )
-        {
-            _dependencyAnalyzer->notifyUpperBoundUpdate( variable, oldUb, value );
-        }
         if ( _incrementalConflictAnalyser )
         {
             _incrementalConflictAnalyser->notifyUpperBoundUpdate( variable, oldUb, value );
@@ -625,10 +616,6 @@ bool BoundManager::shouldProduceProofs() const
     return _boundExplainer != nullptr;
 }
 
-void BoundManager::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer )
-{
-    _dependencyAnalyzer = dependencyAnalyzer;
-}
 void BoundManager::setIncrementalConflictAnalyser(
     std::shared_ptr<IncrementalConflictAnalyser> incrementalConflictAnalyser )
 {

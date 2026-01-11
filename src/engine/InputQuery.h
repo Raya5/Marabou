@@ -31,8 +31,7 @@
 #include <context/context.h>
 
 // --- Incremental ---
-class DependencyAnalyzer;
-class IncrementalConflictAnalyser;
+#include "IncrementalConflictAnalyser.h"
 
 class InputQuery : public IQuery
 {
@@ -171,9 +170,6 @@ public:
         _userContext.popto( toLevel );
     };
 
-    // --- Incremental / Dependency analyzer support ---
-    void setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> analyzer );
-    std::shared_ptr<DependencyAnalyzer> getDependencyAnalyzer() const;
     // --- Incremental / Conflict analyser support ---
     void setIncrementalConflictAnalyser( std::shared_ptr<IncrementalConflictAnalyser> analyser );
     std::shared_ptr<IncrementalConflictAnalyser> getIncrementalConflictAnalyser() const;
@@ -216,9 +212,6 @@ private:
     void freeConstraintsIfNeeded();
 
     // --- Incremental ---
-    // Holds a shared analyzer instance, reused across per-point IPQs
-    std::shared_ptr<DependencyAnalyzer> _dependencyAnalyzer;
-
     // Holds a shared conflict analyser instance, reused across per-point IPQs
     std::shared_ptr<IncrementalConflictAnalyser> _incrementalConflictAnalyser;
 

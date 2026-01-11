@@ -43,9 +43,6 @@
 #include "VnnLibParser.h"
 
 // incremental 
-#include "DependencyAnalyzer.h"
-#include "Preprocessor.h"
-#include "GlobalConfiguration.h"
 #include "IncrementalConflictAnalyser.h"
 
 #include <fcntl.h>
@@ -446,7 +443,7 @@ solve( InputQuery &inputQuery, MarabouOptions &options, std::string redirect = "
                 exitCodeToString( engine.getExitCode() ), ret, *( engine.getStatistics() ) );
         if ( dnc )
         {
-            if ( incremental || inputQuery.getDependencyAnalyzer() ) 
+            if ( incremental ) 
             {
                 // mirror your Python-side guard: analyzer/incremental does not support DnC
                 throw MarabouError( MarabouError::DEBUGGING_ERROR, "Incremental mode does not support DnC/parallelism" );
@@ -561,40 +558,6 @@ void saveQueryAsSmtLib( InputQuery &query, std::string filename )
 void loadQuery( std::string filename, InputQuery &inputQuery )
 {
     return QueryLoader::loadQuery( String( filename ), inputQuery );
-}
-
-// incremental 
-/**
- * Build and return a DependencyAnalyzer instance.
- *
- * This function receives the base InputQuery together with per-query
- * input-domain bounds and construct the DependencyAnalyzer.
- */
-std::shared_ptr<DependencyAnalyzer>
-buildDependencyAnalyzer( const InputQuery &baseIpq,
-                         const std::list<std::list<double>> &allLbs,
-                         const std::list<std::list<double>> &allUbs )
-{
-    ASSERT( allLbs.size() == allUbs.size() );
-    auto toVectorVector = []( const std::list<std::list<double>> &src )
-    {
-        Vector<Vector<double>> dst;
-
-        for ( const auto &row : src )
-        {
-            Vector<double> v;
-            for ( double x : row )
-                v.append( x );
-            dst.append( v );
-        }
-
-        return dst;
-    };
-
-    Vector<Vector<double>> allLbsVector = toVectorVector( allLbs );
-    Vector<Vector<double>> allUbsVector = toVectorVector( allUbs );
-
-    return std::make_shared<DependencyAnalyzer>( &baseIpq, allLbsVector, allUbsVector );
 }
 
 // incremental
@@ -895,8 +858,6 @@ PYBIND11_MODULE( MarabouCore, m )
         .def( "markOutputVariable", &InputQuery::markOutputVariable )
         .def( "outputVariableByIndex", &InputQuery::outputVariableByIndex )
         // incremental
-        .def("setDependencyAnalyzer", &InputQuery::setDependencyAnalyzer)
-        .def("getDependencyAnalyzer", &InputQuery::getDependencyAnalyzer)
         .def( "setIncrementalConflictAnalyser", &InputQuery::setIncrementalConflictAnalyser )
         .def( "getIncrementalConflictAnalyser", &InputQuery::getIncrementalConflictAnalyser );
     py::enum_<PiecewiseLinearFunctionType>( m, "PiecewiseLinearFunctionType" )
@@ -1046,10 +1007,6 @@ PYBIND11_MODULE( MarabouCore, m )
     
     // === incremental ===
 
-    // Minimal class binding so Python can hold the analyzer
-    py::class_<DependencyAnalyzer, std::shared_ptr<DependencyAnalyzer>>(m, "DependencyAnalyzer")
-        .def("getBaseInputQuery", &DependencyAnalyzer::getBaseInputQuery);
-
     // Incremental Conflict Analyser
     py::class_<IncrementalConflictAnalyser,
             std::shared_ptr<IncrementalConflictAnalyser>>(
@@ -1073,24 +1030,6 @@ PYBIND11_MODULE( MarabouCore, m )
                 IncrementalConflictAnalyser
         )pbdoc",
         py::arg( "reuseAllConflicts" )
-    );
-
-    // Factory function exposed to Python
-    m.def(
-        "buildDependencyAnalyzer",
-        &buildDependencyAnalyzer,
-        R"pbdoc(
-            Build a DependencyAnalyzer from a base InputQuery that already has covering input bounds set.
-
-            Args:
-                baseIpq (MarabouCore.InputQuery): InputQuery with covering bounds encoded.
-
-            Returns:
-                DependencyAnalyzer: a reusable analyzer object to attach to per-point InputQueries.
-        )pbdoc",
-        py::arg("baseIpq"),
-        py::arg("allLbs"),
-        py::arg("allUbs")
     );
 
 }

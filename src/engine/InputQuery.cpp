@@ -30,7 +30,6 @@
 
 // --- Incremental ---
 #include <memory>
-#include "DependencyAnalyzer.h"
 
 #define INPUT_QUERY_LOG( x, ... )                                                                  \
     LOG( GlobalConfiguration::INPUT_QUERY_LOGGING, "Marabou Query: %s\n", x )
@@ -402,16 +401,6 @@ void InputQuery::dump() const
 }
 
 // --- Incremental ---
-void InputQuery::setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> analyzer )
-{
-    _dependencyAnalyzer = std::move( analyzer );
-}
-
-std::shared_ptr<DependencyAnalyzer> InputQuery::getDependencyAnalyzer() const
-{
-    return _dependencyAnalyzer;
-}
-
 void InputQuery::setIncrementalConflictAnalyser(
     std::shared_ptr<IncrementalConflictAnalyser> analyser )
 {

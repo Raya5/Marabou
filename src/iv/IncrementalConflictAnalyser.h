@@ -5,10 +5,10 @@
 #include <unordered_map>
 
 #include "Conflict.h"
-#include "DependencyAnalyzer.h"   // for Bitmask, ReLURuntimeState, etc.
 #include "Preprocessor.h"
 
 #include "cadical.hpp"
+#include <boost/dynamic_bitset.hpp>
 
 #include "context/context.h"
 #include "context/cdhashmap.h"
@@ -26,9 +26,18 @@ class Query;
  *
  * No dependency discovery, no NLR logic, no preprocessing passes.
  */
+
+enum class ReLURuntimeState : uint8_t { Unstable, Active, Inactive, Zero };
+enum class ReLUState : uint8_t { Active, Inactive };
+
 class IncrementalConflictAnalyser
 {
 public:
+    /*
+      TODO
+    */  
+    typedef boost::dynamic_bitset<> Bitmask;
+
     /*
      * Constructor
      *
@@ -101,13 +110,13 @@ private:
      */
     void _initializeSatSolver();
     void _importRelevantConflicts();
-    bool _isNonMinimalConflict( const DependencyAnalyzer::Bitmask &mask ) const;
+    bool _isNonMinimalConflict( const IncrementalConflictAnalyser::Bitmask &mask ) const;
 
-    DependencyAnalyzer::Bitmask _buildConflictBitmask(
+    IncrementalConflictAnalyser::Bitmask _buildConflictBitmask(
         const std::vector<unsigned> &vars,
         const std::vector<bool> &isActive ) const;
 
-    DependencyAnalyzer::Bitmask _buildConflictSubBitmask(
+    IncrementalConflictAnalyser::Bitmask _buildConflictSubBitmask(
         const std::vector<unsigned> &vars,
         const std::vector<bool> &isActive ) const;
 
@@ -170,7 +179,7 @@ private:
     /*
      * Minimal conflict tracking (SAT-var indexed)
      */
-    std::vector<DependencyAnalyzer::Bitmask> _minimalConflictBitmasks;
+    std::vector<Bitmask> _minimalConflictBitmasks;
     unsigned _bitmaskSize;
 
     /*

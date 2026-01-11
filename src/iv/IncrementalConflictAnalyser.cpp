@@ -79,7 +79,7 @@ void IncrementalConflictAnalyser::addConflict(
     ASSERT( vars.size() == isActiveList.size() );
 
     // Minimality pruning (optional; keep if it works)
-    DependencyAnalyzer::Bitmask subMask = _buildConflictSubBitmask( vars, isActiveList );
+    IncrementalConflictAnalyser::Bitmask subMask = _buildConflictSubBitmask( vars, isActiveList );
     if ( _isNonMinimalConflict( subMask ) )
         return;
 
@@ -88,7 +88,7 @@ void IncrementalConflictAnalyser::addConflict(
     // Encode immediately into current SAT solver (so future calls in this epsilon see it)
     _encodeConflictClause( _conflicts.back() );
 
-    DependencyAnalyzer::Bitmask fullMask = _buildConflictBitmask( vars, isActiveList );
+    IncrementalConflictAnalyser::Bitmask fullMask = _buildConflictBitmask( vars, isActiveList );
     _minimalConflictBitmasks.push_back( fullMask );
 }
 
@@ -336,7 +336,7 @@ void IncrementalConflictAnalyser::_initializeSatSolver()
 }
 
 bool IncrementalConflictAnalyser::_isNonMinimalConflict(
-    const DependencyAnalyzer::Bitmask &mask ) const
+    const IncrementalConflictAnalyser::Bitmask &mask ) const
 {
     for ( const auto &known : _minimalConflictBitmasks )
     {
@@ -346,12 +346,11 @@ bool IncrementalConflictAnalyser::_isNonMinimalConflict(
     return false;
 }
 
-DependencyAnalyzer::Bitmask
-IncrementalConflictAnalyser::_buildConflictBitmask( const std::vector<unsigned> &vars,
+IncrementalConflictAnalyser::Bitmask IncrementalConflictAnalyser::_buildConflictBitmask( const std::vector<unsigned> &vars,
                                                    const std::vector<bool> &isActive ) const
 {
     ASSERT( vars.size() == isActive.size() );
-    DependencyAnalyzer::Bitmask mask( _bitmaskSize );
+    IncrementalConflictAnalyser::Bitmask mask( _bitmaskSize );
 
     for ( unsigned i = 0; i < vars.size(); ++i )
     {
@@ -369,12 +368,11 @@ IncrementalConflictAnalyser::_buildConflictBitmask( const std::vector<unsigned> 
     return mask;
 }
 
-DependencyAnalyzer::Bitmask
-IncrementalConflictAnalyser::_buildConflictSubBitmask( const std::vector<unsigned> &vars,
+IncrementalConflictAnalyser::Bitmask IncrementalConflictAnalyser::_buildConflictSubBitmask( const std::vector<unsigned> &vars,
                                                       const std::vector<bool> &isActive ) const
 {
     ASSERT( vars.size() == isActive.size() );
-    DependencyAnalyzer::Bitmask mask( _bitmaskSize );
+    IncrementalConflictAnalyser::Bitmask mask( _bitmaskSize );
 
     for ( unsigned i = 0; i < vars.size(); ++i )
     {

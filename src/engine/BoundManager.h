@@ -1,4 +1,4 @@
-/*********************                                                        */
+ /*********************                                                        */
 /*! \file BoundManager.h
  ** \verbatim
  ** Top contributors (to current version):
@@ -50,11 +50,9 @@
 #include "Vector.h"
 #include "context/cdo.h"
 #include "context/context.h"
-// #include "DependencyAnalyzer.h"
 
 class ITableau;
 class IEngine;
-class DependencyAnalyzer;
 class IncrementalConflictAnalyser;
 class BoundManager : public IBoundManager
 {
@@ -219,7 +217,6 @@ public:
     */
     bool shouldProduceProofs() const;
 
-    void setDependencyAnalyzer( std::shared_ptr<DependencyAnalyzer> dependencyAnalyzer );
     void setIncrementalConflictAnalyser(
     std::shared_ptr<IncrementalConflictAnalyser> incrementalConflictAnalyser );
 
@@ -244,9 +241,7 @@ private:
     Vector<CVC4::context::CDO<bool> *> _tightenedLower;
     Vector<CVC4::context::CDO<bool> *> _tightenedUpper;
 
-    std::shared_ptr<DependencyAnalyzer> _dependencyAnalyzer; // null if not incremental
-    std::shared_ptr<IncrementalConflictAnalyser> _incrementalConflictAnalyser;
-
+    std::shared_ptr<IncrementalConflictAnalyser> _incrementalConflictAnalyser; // null if not incremental
 
     /*
        Record first tightening that violates bounds
