@@ -5,16 +5,27 @@
 
 #include <cassert>
 
-IncrementalConflictAnalyser::IncrementalConflictAnalyser( bool reuseAllConflicts )
+IncrementalConflictAnalyser::IncrementalConflictAnalyser( bool reuseAllConflicts,  bool autoInheritance )
     : _context( nullptr )
     , _preprocessor( nullptr )
     , _currentEpsilon( -1.0 )
-    , _reuseAllConflicts( reuseAllConflicts )
+    , _currentQueryId( 0 )
+    , _queryIdWasSet( false )
+    , _ancestorIds()
+    , _ancestorsWasSet( false )
+    , _clearBetweenRuns( reuseAllConflicts )
+    , _autoInheritance( autoInheritance )
     , _cadical( nullptr )
     , _conflictsExistForCurrent( false )
     , _bitmaskSize( 0 )
     , _seenPhase( nullptr )
 {
+    if ( !_autoInheritance ) ASSERT( _clearBetweenRuns );
+    if ( !_clearBetweenRuns )
+    {
+        ASSERT (_minimalConflictBitmasks.size() == 0);
+        _initializeSatSolver();
+    }
 }
 
 IncrementalConflictAnalyser::~IncrementalConflictAnalyser()
@@ -72,26 +83,77 @@ void IncrementalConflictAnalyser::setNewEpsilon( double epsilon )
     _currentEpsilon = epsilon;
 }
 
+void IncrementalConflictAnalyser::setID( unsigned id )
+{
+    // setID is only meaningful in ancestry mode
+    ASSERT( !_autoInheritance );
+    ASSERT( id > 0 );
+
+    _currentQueryId = id;
+    _queryIdWasSet = true;
+}
+
+void IncrementalConflictAnalyser::setAncestors(
+    const std::vector<unsigned> &ancestors )
+{
+    _ancestorIds = ancestors;
+    _ancestorsWasSet = true;
+}
+
 void IncrementalConflictAnalyser::addConflict(
     const std::vector<unsigned> &vars,
     const std::vector<bool> &isActiveList )
 {
-    ASSERT( _currentEpsilon >= 0.0 );
     ASSERT( vars.size() == isActiveList.size() );
 
+    // Strategy-specific metadata must be set
+    if ( _autoInheritance )
+    {
+        // Epsilon mode
+        ASSERT( _currentEpsilon >= 0.0 );
+    }
+    else
+    {
+        // Ancestry mode
+        ASSERT( !_autoInheritance ); // todo remove
+        ASSERT( _queryIdWasSet );
+        ASSERT( _currentQueryId != 0 );
+        ASSERT( _ancestorsWasSet );
+    }
+
     // Minimality pruning (optional; keep if it works)
-    IncrementalConflictAnalyser::Bitmask subMask = _buildConflictSubBitmask( vars, isActiveList );
+    IncrementalConflictAnalyser::Bitmask subMask =
+        _buildConflictSubBitmask( vars, isActiveList );
     if ( _isNonMinimalConflict( subMask ) )
         return;
 
-    auto &bucket = _conflictsByEpsilon[_currentEpsilon];
-    bucket.emplace_back( vars, isActiveList );
-    // Encode immediately into current SAT solver (so future calls in this epsilon see it)
-    _encodeConflictClause( bucket.back() );
+    // Store conflict under the appropriate provenance key
+    Conflict *stored = nullptr;
 
-    IncrementalConflictAnalyser::Bitmask fullMask = _buildConflictBitmask( vars, isActiveList );
+    if ( _autoInheritance )
+    {
+        auto &bucket = _conflictsByEpsilon[_currentEpsilon];
+        bucket.emplace_back( vars, isActiveList );
+        stored = &bucket.back();
+    }
+    else
+    {
+        auto &bucket = _conflictsByQueryId[_currentQueryId];
+        bucket.emplace_back( vars, isActiveList );
+        stored = &bucket.back();
+    }
+
+    ASSERT( stored );
+
+    // Encode immediately into current SAT solver (so future calls in this run see it)
+    _encodeConflictClause( *stored );
+
+    // Track minimality bitmask for this run
+    IncrementalConflictAnalyser::Bitmask fullMask =
+        _buildConflictBitmask( vars, isActiveList );
     _minimalConflictBitmasks.push_back( fullMask );
 }
+
 
 
 void IncrementalConflictAnalyser::notifyNeuronFixed( unsigned newVar, ReLUState state )
@@ -214,7 +276,7 @@ bool IncrementalConflictAnalyser::getImpliedTighteningsFromSat( List<Tightening>
         // Zero treated as neither active nor inactive; do not force further
         if ( currentRt == ReLURuntimeState::Zero )
         {
-            ASSERT( false );
+            continue;
         }
 
         // Emit tightening in ENGINE var space (NEW var id)
@@ -291,39 +353,64 @@ void IncrementalConflictAnalyser::_emitTighteningsForImpliedPhase( unsigned oldV
 
 void IncrementalConflictAnalyser::notifySolvingStarted( unsigned numQueryVariables )
 {
-
     ASSERT( _context );
     ASSERT( _preprocessor );
     ASSERT( !_conflictsExistForCurrent );
 
     // Epsilon must be valid
-    ASSERT( _currentEpsilon >= 0.0 );
+    if ( _autoInheritance )
+    {
+        ASSERT( _currentEpsilon >= 0.0 );
+    }
+    else
+    {
+
+        ASSERT( !_autoInheritance ); // TODO: remove later
+        ASSERT( _clearBetweenRuns ); // ancestry requires rebuild-per-run
+        ASSERT( _queryIdWasSet );
+        ASSERT( _ancestorsWasSet );
+    }
     if (_bitmaskSize == 0)
         _bitmaskSize = 2 * numQueryVariables + 3;
 
     // Bitmask must be large enough to index all variables
     ASSERT( _bitmaskSize >= 2 * numQueryVariables + 3 );
 
-    if ( _reuseAllConflicts )
+    if ( _clearBetweenRuns )
     {
         ASSERT (_minimalConflictBitmasks.size() == 0);
         _initializeSatSolver();
         _importRelevantConflicts();
     }
-
 }
 
 
 void IncrementalConflictAnalyser::notifySolved()
 {
+    if ( _autoInheritance )
+    {
+        _currentEpsilon = -1.0;
 
-    _currentEpsilon = -1.0;
+        ASSERT( _currentQueryId == 0 );
+        ASSERT( !_queryIdWasSet );
+        ASSERT( _ancestorIds.empty() );
+        ASSERT( !_ancestorsWasSet );
+    }
+    else
+    {
+        _currentQueryId = 0;
+        _queryIdWasSet = false;
+        _ancestorIds.clear();
+        _ancestorsWasSet = false;
+
+        ASSERT( _currentEpsilon == -1.0 );
+    }
     _context = nullptr;
     _preprocessor = nullptr;
     _seenPhase = nullptr;
     _conflictsExistForCurrent = false;
 
-    if ( _reuseAllConflicts )
+    if ( _clearBetweenRuns )
     {
         _minimalConflictBitmasks.clear();
     }
@@ -478,19 +565,29 @@ unsigned IncrementalConflictAnalyser::_litBitIndex( unsigned satVar, bool isActi
 
 void IncrementalConflictAnalyser::_importRelevantConflicts()
 {
-    
+    if ( _autoInheritance )
+        _importRelevantConflictsEpsilon();
+    else
+        _importRelevantConflictsAncestry();
+}
+
+
+
+void IncrementalConflictAnalyser::_importRelevantConflictsEpsilon()
+{
     size_t total = 0;
     for ( const auto &kv : _conflictsByEpsilon )
         total += kv.second.size();
 
-    printf( "[ICA][IV] _importRelevantConflicts: currentEpsilon=%.6f, totalConflicts=%zu\n",
-            _currentEpsilon,
-            total );
+    printf(
+        "[ICA][IV] _importRelevantConflictsEpsilon: currentEpsilon=%.6f, totalConflicts=%zu\n",
+        _currentEpsilon,
+        total );
 
     unsigned imported = 0;
 
     for ( auto it = _conflictsByEpsilon.lower_bound( _currentEpsilon );
-        it != _conflictsByEpsilon.end(); ++it )
+          it != _conflictsByEpsilon.end(); ++it )
     {
         for ( const Conflict &conflict : it->second )
         {
@@ -499,6 +596,48 @@ void IncrementalConflictAnalyser::_importRelevantConflicts()
         }
     }
 
-    printf( "[ICA][IV] _importRelevantConflicts done: imported=%u\n", imported );
+    printf(
+        "[ICA][IV] _importRelevantConflictsEpsilon done: imported=%u\n",
+        imported );
 }
 
+void IncrementalConflictAnalyser::_importRelevantConflictsAncestry()
+{
+    // Ancestry metadata must have been provided
+    ASSERT( _ancestorsWasSet );
+    ASSERT( _queryIdWasSet );
+    ASSERT( _currentQueryId != 0 );
+
+    size_t total = 0;
+    for ( unsigned ancestorId : _ancestorIds )
+    {
+        auto it = _conflictsByQueryId.find( ancestorId );
+        if ( it != _conflictsByQueryId.end() )
+            total += it->second.size();
+    }
+
+    printf(
+        "[ICA][IV] _importRelevantConflictsAncestry: currentQueryId=%u, numAncestors=%zu, totalConflicts=%zu\n",
+        _currentQueryId,
+        _ancestorIds.size(),
+        total );
+
+    unsigned imported = 0;
+
+    for ( unsigned ancestorId : _ancestorIds )
+    {
+        auto it = _conflictsByQueryId.find( ancestorId );
+        if ( it == _conflictsByQueryId.end() )
+            continue;
+
+        for ( const Conflict &conflict : it->second )
+        {
+            _encodeConflictClause( conflict );
+            ++imported;
+        }
+    }
+
+    printf(
+        "[ICA][IV] _importRelevantConflictsAncestry done: imported=%u\n",
+        imported );
+}

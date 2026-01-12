@@ -76,6 +76,7 @@ Engine::Engine()
     , _UNSATCertificate( NULL )
     , _incrementalMode( Options::get()->getBool( Options::INCREMENTAL_MODE ) )
     , _incrementalConflictAnalyser( NULL )
+    , _originalNumVariables( 0 )
 {
     _searchTreeHandler.setStatistics( &_statistics );
     _tableau->setStatistics( &_statistics );
@@ -246,9 +247,11 @@ bool Engine::solve( double timeoutInSeconds )
     }
 
     bool splitJustPerformed = true;
-    if ( _incrementalMode )
-        _incrementalConflictAnalyser->notifySolvingStarted( _preprocessedQuery->getNumberOfVariables() );
-    
+    if ( _incrementalMode ){
+        ASSERT( _originalNumVariables > 0 );
+        ASSERT( _incrementalConflictAnalyser );
+        _incrementalConflictAnalyser->notifySolvingStarted( _originalNumVariables );
+    }
     struct timespec mainLoopStart = TimeUtils::sampleMicro();
     while ( true )
     {
@@ -1022,6 +1025,8 @@ void Engine::invokePreprocessor( const IQuery &inputQuery, bool preprocess )
                 "%u equations, %u variables\n",
                 inputQuery.getNumberOfEquations(),
                 inputQuery.getNumberOfVariables() );
+    // Save original number of variables
+    _originalNumVariables = inputQuery.getNumberOfVariables();
 
     // If processing is enabled, invoke the preprocessor
     _preprocessingEnabled = preprocess;

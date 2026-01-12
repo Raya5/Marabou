@@ -569,13 +569,10 @@ void loadQuery( std::string filename, InputQuery &inputQuery )
  *   true  -> ALL_LAST
  */
 std::shared_ptr<IncrementalConflictAnalyser>
-buildIncrementalConflictAnalyser( bool reuseAllConflicts )
+buildIncrementalConflictAnalyser( bool reuseAllConflicts, bool autoInheritance )
 {
-    return std::make_shared<IncrementalConflictAnalyser>( reuseAllConflicts );
+    return std::make_shared<IncrementalConflictAnalyser>( reuseAllConflicts, autoInheritance );
 }
-
-
-
 
 // Code necessary to generate Python library
 // Describes which classes and functions are exposed to API
@@ -1012,6 +1009,8 @@ PYBIND11_MODULE( MarabouCore, m )
             std::shared_ptr<IncrementalConflictAnalyser>>(
         m, "IncrementalConflictAnalyser" )
         .def( "setNewEpsilon", &IncrementalConflictAnalyser::setNewEpsilon )
+        .def("setID", &IncrementalConflictAnalyser::setID)
+        .def("setAncestors", &IncrementalConflictAnalyser::setAncestors)
         .def( "notifySolvingStarted", &IncrementalConflictAnalyser::notifySolvingStarted )
         .def( "notifySolved", &IncrementalConflictAnalyser::notifySolved );
 
@@ -1021,15 +1020,42 @@ PYBIND11_MODULE( MarabouCore, m )
         R"pbdoc(
             Build an IncrementalConflictAnalyser.
 
+            The IncrementalConflictAnalyser supports two orthogonal concepts: how conflicts are
+            inherited (epsilon or ancestry) and whether the SAT solver state is reused across solves.
+
             Args:
                 reuseAllConflicts (bool):
-                    False -> ONLY_LAST (keep SAT solver state)
-                    True  -> ALL_LAST  (recreate SAT solver per epsilon)
+                    Controls SAT-solver reuse policy between solves.
+
+                    False:
+                        Keep the CaDiCaL solver state across solves.
+                        Conflicts learned in earlier solves remain encoded.
+                        Intended for monotone epsilon schedules (e.g., linear decreasing epsilon).
+
+                    True:
+                        Recreate the CaDiCaL solver for each solve and re-import
+                        the relevant conflicts according to the inheritance strategy.
+                        Required for non-monotone schedules (e.g., binary epsilon search).
+
+                autoInheritance (bool):
+                    Selects the conflict inheritance strategy.
+
+                    True:
+                        Epsilon-based inheritance.
+                        Conflicts are stored by epsilon and, before each solve,
+                        all conflicts learned at epsilon >= current epsilon are imported.
+
+                    False:
+                        Ancestry-based inheritance.
+                        Conflicts are stored by query ID and, before each solve,
+                        conflicts from explicitly provided ancestor query IDs are imported.
+                        Requires reuseAllConflicts == True.
 
             Returns:
                 IncrementalConflictAnalyser
         )pbdoc",
-        py::arg( "reuseAllConflicts" )
+        py::arg("reuseAllConflicts"),
+        py::arg("autoInheritance")
     );
 
 }

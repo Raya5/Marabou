@@ -955,6 +955,7 @@ private:
     bool _incrementalMode;
     std::shared_ptr<IncrementalConflictAnalyser> _incrementalConflictAnalyser; // null if not incremental
     void recordConflictFromCurrentDecisions();
+    unsigned _originalNumVariables;
 
 
 };

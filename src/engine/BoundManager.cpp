@@ -190,7 +190,7 @@ bool BoundManager::setLowerBound( unsigned variable, double value )
 
         if ( _incrementalConflictAnalyser )
         {
-            _incrementalConflictAnalyser->notifyUpperBoundUpdate( variable, oldLb, value );
+            _incrementalConflictAnalyser->notifyLowerBoundUpdate( variable, oldLb, value );
         }
 
         return true;

@@ -46,7 +46,8 @@ public:
      *   false -> ONLY_LAST  (keep CaDiCaL state across solves)
      *   true  -> ALL_LAST   (reset CaDiCaL per epsilon and re-import conflicts)
      */
-    explicit IncrementalConflictAnalyser( bool reuseAllConflicts );
+    explicit IncrementalConflictAnalyser( bool reuseAllConflicts, bool autoInheritance );
+
 
     ~IncrementalConflictAnalyser();
 
@@ -66,6 +67,16 @@ public:
      * Called once per epsilon solve, before solving begins
      */
     void setNewEpsilon( double epsilon );
+
+    /*
+     * For ancestry-based inheritance: set current query ID, must be > 0 
+     */
+    void setID( unsigned id );
+
+    /*
+     * For ancestry-based inheritance: set current query ancestors
+     */
+    void setAncestors( const std::vector<unsigned> &ancestors );
 
     /*
      * Conflict ingestion (called by Engine)
@@ -111,6 +122,8 @@ private:
      */
     void _initializeSatSolver();
     void _importRelevantConflicts();
+    void _importRelevantConflictsEpsilon();
+    void _importRelevantConflictsAncestry();
     bool _isNonMinimalConflict( const IncrementalConflictAnalyser::Bitmask &mask ) const;
 
     IncrementalConflictAnalyser::Bitmask _buildConflictBitmask(
@@ -157,16 +170,30 @@ private:
     double _currentEpsilon;
 
     /*
+     * Query ID / ancestry tracking
+     */
+    unsigned _currentQueryId;
+    bool _queryIdWasSet;
+    std::vector<unsigned> _ancestorIds;
+    bool _ancestorsWasSet;
+
+    /*
      * Conflict storage (organized by epsilon)
      */
     std::map<double, std::vector<Conflict>> _conflictsByEpsilon;
+
+    /*
+     * Conflict storage (organized by query ID)
+     */
+    std::unordered_map<unsigned, std::vector<Conflict>> _conflictsByQueryId;
 
     /*
      * Reuse policy
      *   false -> ONLY_LAST
      *   true  -> ALL_LAST
      */
-    bool _reuseAllConflicts;
+    bool _clearBetweenRuns;
+    bool _autoInheritance;
 
     /*
      * SAT-based reasoning
