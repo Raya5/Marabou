@@ -9,6 +9,7 @@
 
 #include "cadical.hpp"
 #include <boost/dynamic_bitset.hpp>
+#include <map>
 
 #include "context/context.h"
 #include "context/cdhashmap.h"
@@ -89,7 +90,7 @@ public:
     /*
      * Query implied tightenings (stub)
      *
-     * Returns false for now (no tightenings)
+     * Returns false if conflict detected
      */
     bool getImpliedTighteningsFromSat( List<Tightening> &tightenings );
 
@@ -156,9 +157,9 @@ private:
     double _currentEpsilon;
 
     /*
-     * Conflict storage (flat)
+     * Conflict storage (organized by epsilon)
      */
-    std::vector<Conflict> _conflicts;
+    std::map<double, std::vector<Conflict>> _conflictsByEpsilon;
 
     /*
      * Reuse policy
@@ -171,6 +172,7 @@ private:
      * SAT-based reasoning
      */
     std::unique_ptr<CaDiCaL::Solver> _cadical;
+    bool _conflictsExistForCurrent;
 
     std::unordered_map<unsigned, unsigned> _reluIndexToSatVarMap;
     Vector<unsigned> _satVarToReluIndexMap;

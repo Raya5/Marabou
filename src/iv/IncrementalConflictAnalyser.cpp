@@ -11,6 +11,7 @@ IncrementalConflictAnalyser::IncrementalConflictAnalyser( bool reuseAllConflicts
     , _currentEpsilon( -1.0 )
     , _reuseAllConflicts( reuseAllConflicts )
     , _cadical( nullptr )
+    , _conflictsExistForCurrent( false )
     , _bitmaskSize( 0 )
     , _seenPhase( nullptr )
 {
@@ -83,10 +84,10 @@ void IncrementalConflictAnalyser::addConflict(
     if ( _isNonMinimalConflict( subMask ) )
         return;
 
-    _conflicts.emplace_back( _currentEpsilon, vars, isActiveList );
-
+    auto &bucket = _conflictsByEpsilon[_currentEpsilon];
+    bucket.emplace_back( vars, isActiveList );
     // Encode immediately into current SAT solver (so future calls in this epsilon see it)
-    _encodeConflictClause( _conflicts.back() );
+    _encodeConflictClause( bucket.back() );
 
     IncrementalConflictAnalyser::Bitmask fullMask = _buildConflictBitmask( vars, isActiveList );
     _minimalConflictBitmasks.push_back( fullMask );
@@ -154,7 +155,7 @@ void IncrementalConflictAnalyser::notifyUpperBoundUpdate( unsigned newVar,
 
 bool IncrementalConflictAnalyser::getImpliedTighteningsFromSat( List<Tightening> &tightenings )
 {
-    if ( _conflicts.size() == 0 )
+    if ( !_conflictsExistForCurrent )
         return true;
 
     ASSERT( _currentEpsilon >= 0.0 );
@@ -293,6 +294,7 @@ void IncrementalConflictAnalyser::notifySolvingStarted( unsigned numQueryVariabl
 
     ASSERT( _context );
     ASSERT( _preprocessor );
+    ASSERT( !_conflictsExistForCurrent );
 
     // Epsilon must be valid
     ASSERT( _currentEpsilon >= 0.0 );
@@ -319,6 +321,8 @@ void IncrementalConflictAnalyser::notifySolved()
     _context = nullptr;
     _preprocessor = nullptr;
     _seenPhase = nullptr;
+    _conflictsExistForCurrent = false;
+
     if ( _reuseAllConflicts )
     {
         _minimalConflictBitmasks.clear();
@@ -456,6 +460,7 @@ void IncrementalConflictAnalyser::_encodeConflictClause( const Conflict &conflic
 
     // Terminate clause
     _cadical->add( 0 );
+    _conflictsExistForCurrent = true;
 
 }
 
@@ -473,24 +478,24 @@ unsigned IncrementalConflictAnalyser::_litBitIndex( unsigned satVar, bool isActi
 
 void IncrementalConflictAnalyser::_importRelevantConflicts()
 {
+    
+    size_t total = 0;
+    for ( const auto &kv : _conflictsByEpsilon )
+        total += kv.second.size();
+
     printf( "[ICA][IV] _importRelevantConflicts: currentEpsilon=%.6f, totalConflicts=%zu\n",
             _currentEpsilon,
-            _conflicts.size() );
+            total );
 
     unsigned imported = 0;
 
-    for ( const Conflict &conflict : _conflicts )
+    for ( auto it = _conflictsByEpsilon.lower_bound( _currentEpsilon );
+        it != _conflictsByEpsilon.end(); ++it )
     {
-        const double eps = conflict.getEpsilon();
-
-        if ( eps >= _currentEpsilon )
+        for ( const Conflict &conflict : it->second )
         {
             _encodeConflictClause( conflict );
             ++imported;
-        }
-        else
-        {
-            // printf( "[ICA][IV]   skipping conflict (eps=%.6f < current)\n", eps );
         }
     }
 

@@ -4209,9 +4209,11 @@ void Engine::applyIncrementalConflictAnalyserTightenings()
     {
         throw InfeasibleQueryException();
     }
-
-    printf( "[Engine][IV] applyIncrementalConflictAnalyserTightenings: %u tightenings\n",
-            tightenings.size() );
+    if ( tightenings.size() > 0 )
+    {
+        printf( "[Engine][IV] applyIncrementalConflictAnalyserTightenings: %u tightenings\n",
+                tightenings.size() );
+    }
 
     if ( tightenings.empty() )
         return;

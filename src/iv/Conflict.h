@@ -35,19 +35,16 @@ public:
      * Preconditions:
      *   - vars.size() == isActive.size()
      */
-    Conflict( double epsilon,
-              const std::vector<unsigned> &vars,
+    Conflict( const std::vector<unsigned> &vars,
               const std::vector<bool> &isActive );
 
     /*
      * Accessors
      */
-    double getEpsilon() const;
     const std::vector<unsigned> &getVars() const;
     const std::vector<bool> &getIsActive() const;
 
 private:
-    double _epsilon;                  // epsilon at which conflict was learned
     std::vector<unsigned> _vars;      // phase variable indices
     std::vector<bool> _isActive;      // corresponding phase values
 };
