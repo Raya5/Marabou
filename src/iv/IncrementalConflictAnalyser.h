@@ -115,6 +115,10 @@ public:
      * End-of-solve notification (optional hook)
      */
     void notifySolved();
+    /*
+     * Get number of recorded conflicts (for stats)
+     */
+    unsigned getRecordedConflictCount() const;
 
 private:
     /*
@@ -215,6 +219,8 @@ private:
      * Phase tracking (context-dependent)
      */
     CVC4::context::CDHashMap<unsigned, ReLURuntimeState, std::hash<unsigned>> *_seenPhase;
+
+    unsigned _recordedConflicts; // total conflicts recorded over ICA lifetime for stats
 };
 
 #endif // __IncrementalConflictAnalyser_h__

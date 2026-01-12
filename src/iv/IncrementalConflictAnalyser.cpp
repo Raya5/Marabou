@@ -19,6 +19,7 @@ IncrementalConflictAnalyser::IncrementalConflictAnalyser( bool reuseAllConflicts
     , _conflictsExistForCurrent( false )
     , _bitmaskSize( 0 )
     , _seenPhase( nullptr )
+    , _recordedConflicts( 0 )
 {
     if ( !_autoInheritance ) ASSERT( _clearBetweenRuns );
     if ( !_clearBetweenRuns )
@@ -144,6 +145,7 @@ void IncrementalConflictAnalyser::addConflict(
     }
 
     ASSERT( stored );
+    _recordedConflicts++;
 
     // Encode immediately into current SAT solver (so future calls in this run see it)
     _encodeConflictClause( *stored );
@@ -640,4 +642,9 @@ void IncrementalConflictAnalyser::_importRelevantConflictsAncestry()
     printf(
         "[ICA][IV] _importRelevantConflictsAncestry done: imported=%u\n",
         imported );
+}
+
+unsigned IncrementalConflictAnalyser::getRecordedConflictCount() const
+{
+    return _recordedConflicts;
 }
