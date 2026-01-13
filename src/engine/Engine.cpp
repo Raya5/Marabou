@@ -4140,7 +4140,7 @@ void Engine::recordConflictFromCurrentDecisions()
     ASSERT( _incrementalMode );
 
     const unsigned depth = _searchTreeHandler.getStackDepth();
-    printf( "[Engine][IV] recordConflictFromCurrentDecisions at depth %u\n", depth );
+    // printf( "[Engine][IV] recordConflictFromCurrentDecisions at depth %u\n", depth );
 
     ASSERT( _incrementalConflictAnalyser );
 
@@ -4185,10 +4185,10 @@ void Engine::recordConflictFromCurrentDecisions()
     ASSERT( oldVars.size() == isActiveList.size() );
     _incrementalConflictAnalyser->addConflict( oldVars, isActiveList );
 
-    printf( "[Engine][IV] Stored conflict of size %zu: ", oldVars.size() );
-    for ( size_t i = 0; i < oldVars.size(); ++i )
-        printf( " (%u,%s)", oldVars[i], isActiveList[i] ? "A" : "I" );
-    printf( "\n" );
+    // printf( "[Engine][IV] Stored conflict of size %zu: ", oldVars.size() );
+    // for ( size_t i = 0; i < oldVars.size(); ++i )
+    //     printf( " (%u,%s)", oldVars[i], isActiveList[i] ? "A" : "I" );
+    // printf( "\n" );
 }
 
 void Engine::applyIncrementalConflictAnalyserTightenings()
@@ -4216,8 +4216,8 @@ void Engine::applyIncrementalConflictAnalyserTightenings()
     }
     if ( tightenings.size() > 0 )
     {
-        printf( "[Engine][IV] applyIncrementalConflictAnalyserTightenings: %u tightenings\n",
-                tightenings.size() );
+        // printf( "[Engine][IV] applyIncrementalConflictAnalyserTightenings: %u tightenings\n",
+        //         tightenings.size() );
     }
 
     if ( tightenings.empty() )
