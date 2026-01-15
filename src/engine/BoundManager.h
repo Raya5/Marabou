@@ -217,10 +217,6 @@ public:
     */
     bool shouldProduceProofs() const;
 
-    void setIncrementalConflictAnalyser(
-    std::shared_ptr<IncrementalConflictAnalyser> incrementalConflictAnalyser );
-
-
 private:
     CVC4::context::Context &_context;
     unsigned _size;
@@ -240,8 +236,6 @@ private:
 
     Vector<CVC4::context::CDO<bool> *> _tightenedLower;
     Vector<CVC4::context::CDO<bool> *> _tightenedUpper;
-
-    std::shared_ptr<IncrementalConflictAnalyser> _incrementalConflictAnalyser; // null if not incremental
 
     /*
        Record first tightening that violates bounds

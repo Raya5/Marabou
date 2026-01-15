@@ -234,14 +234,11 @@ bool Engine::solve( double timeoutInSeconds )
     if ( _incrementalMode ) {
         ASSERT( _incrementalConflictAnalyser );
         ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
-        _incrementalConflictAnalyser->setContext( &_context);
         _incrementalConflictAnalyser->setPreprocessor( &_preprocessor);
 
        // Sync DA with Engine's preprocessed query
        ASSERT( _preprocessedQuery );
-       _incrementalConflictAnalyser->syncWithEnginePreprocessedQuery( *_preprocessedQuery ); // update _seenPhase with any set vars that are also in from varindex to sat index
 
-        _boundManager.setIncrementalConflictAnalyser( _incrementalConflictAnalyser );
     } else if ( Options::get()->getBool( Options::INCREMENTAL_MODE ) ) {
         throw MarabouError( MarabouError::DEBUGGING_ERROR, "Engine::solve: Incremental mode set but no incremental conflict analyser attached to engine." );
     }
@@ -4204,6 +4201,8 @@ void Engine::applyIncrementalConflictAnalyserTightenings()
         - SAT-based reasoning using CaDiCaL over learned conflicts + seen phases.
         - If a conflict is detected (i.e., current decisions imply UNSAT), throw.
     */
+
+    _incrementalConflictAnalyser->syncWithEngineBoundManager( &_boundManager );
     List<Tightening> tightenings;
 
     // Adjust this call to match your ICA API:
@@ -4216,20 +4215,20 @@ void Engine::applyIncrementalConflictAnalyserTightenings()
     }
     if ( tightenings.size() > 0 )
     {
-        // printf( "[Engine][IV] applyIncrementalConflictAnalyserTightenings: %u tightenings\n",
+        // printf( "[Engine][IV] applyIncrementalConflictAnalyserTightenings pre: %u tightenings\n",
         //         tightenings.size() );
     }
 
     if ( tightenings.empty() )
         return;
 
-    _statistics.incUnsignedAttribute( Statistics::NUM_INCREMENTAL_TIGHTENINGS,
-                                      tightenings.size() );
+    unsigned tighteningsApplied = 0;
 
     for ( const auto &tightening : tightenings )
     {
         const unsigned engineVar  = tightening._variable;
         const unsigned tableauVar = _tableau->getVariableAfterMerging( engineVar );
+        ASSERT( tableauVar == engineVar ); 
 
         const double currentLb = _boundManager.getLowerBound( engineVar );
         const double currentUb = _boundManager.getUpperBound( engineVar );
@@ -4245,6 +4244,7 @@ void Engine::applyIncrementalConflictAnalyserTightenings()
             // ASSERT( !FloatUtils::gt( newLb, currentUb ) );
 
             _boundManager.tightenLowerBound( tableauVar, newLb );
+            tighteningsApplied++;
         }
         else if ( tightening._type == Tightening::UB )
         {
@@ -4257,10 +4257,15 @@ void Engine::applyIncrementalConflictAnalyserTightenings()
             // ASSERT( !FloatUtils::lt( newUb, currentLb ) );
 
             _boundManager.tightenUpperBound( tableauVar, newUb );
+            tighteningsApplied++;
         }
         else
         {
             ASSERT( false );
         }
     }
+    _statistics.incUnsignedAttribute( Statistics::NUM_INCREMENTAL_TIGHTENINGS,
+                                    tighteningsApplied );
+    ASSERT( tighteningsApplied == tightenings.size() );
+
 }

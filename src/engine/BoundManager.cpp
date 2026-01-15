@@ -188,11 +188,6 @@ bool BoundManager::setLowerBound( unsigned variable, double value )
         if ( !consistentBounds( variable ) )
             recordInconsistentBound( variable, value, Tightening::LB );
 
-        if ( _incrementalConflictAnalyser )
-        {
-            _incrementalConflictAnalyser->notifyLowerBoundUpdate( variable, oldLb, value );
-        }
-
         return true;
     }
     return false;
@@ -211,11 +206,6 @@ bool BoundManager::setUpperBound( unsigned variable, double value )
 
         if ( !consistentBounds( variable ) )
             recordInconsistentBound( variable, value, Tightening::UB );
-
-        if ( _incrementalConflictAnalyser )
-        {
-            _incrementalConflictAnalyser->notifyUpperBoundUpdate( variable, oldUb, value );
-        }
 
         return true;
     }
@@ -614,10 +604,4 @@ bool BoundManager::isExplanationTrivial( unsigned var, bool isUpper ) const
 bool BoundManager::shouldProduceProofs() const
 {
     return _boundExplainer != nullptr;
-}
-
-void BoundManager::setIncrementalConflictAnalyser(
-    std::shared_ptr<IncrementalConflictAnalyser> incrementalConflictAnalyser )
-{
-    _incrementalConflictAnalyser = incrementalConflictAnalyser;
 }

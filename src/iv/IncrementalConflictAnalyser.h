@@ -11,8 +11,6 @@
 #include <boost/dynamic_bitset.hpp>
 #include <map>
 
-#include "context/context.h"
-#include "context/cdhashmap.h"
 class Query;
 
 /*
@@ -51,17 +49,12 @@ public:
 
     ~IncrementalConflictAnalyser();
 
-    /*
-     * Lifecycle hooks (mirrors DA)
-     */
-    void setContext( CVC4::context::Context *context );
     void setPreprocessor( Preprocessor *preprocessor );
 
     /* 
-     * Sync already-tightened bounds from Engine and seed _seenPhase for stable ReLUs
+     * Sync already-tightened bounds from Engine and seed _currentPhases for stable ReLUs
      */
-    void syncWithEnginePreprocessedQuery( const Query &engineQuery );
-
+    void syncWithEngineBoundManager( BoundManager *boundManager );
 
     /*
      * Called once per epsilon solve, before solving begins
@@ -87,16 +80,6 @@ public:
     void addConflict( const std::vector<unsigned> &vars,
                       const std::vector<bool> &isActiveList );
 
-    /*
-     * Notifications from Engine (stubs for now)
-     */
-    void notifyNeuronFixed( unsigned newVar, ReLUState state );
-    void notifyLowerBoundUpdate( unsigned newVar,
-                             double previousLowerBound,
-                             double newLowerBound );
-    void notifyUpperBoundUpdate( unsigned newVar,
-                             double previousUpperBound,
-                             double newUpperBound );
 
     /*
      * Query implied tightenings (stub)
@@ -138,7 +121,18 @@ private:
         const std::vector<unsigned> &vars,
         const std::vector<bool> &isActive ) const;
 
+    /*
+     * Notifications from Engine (stubs for now)
+     */
+    void _notifyNeuronFixed( unsigned newVar, ReLUState state );
+    void _notifyLowerBoundUpdate( unsigned newVar,
+                             double previousLowerBound,
+                             double newLowerBound );
+    void _notifyUpperBoundUpdate( unsigned newVar,
+                             double previousUpperBound,
+                             double newUpperBound );
 
+                             
     unsigned _reluIndexToSatVar( unsigned relu ) const;
     unsigned _reluIndexToSatVarForce( unsigned relu );
     unsigned _createNewSatVarForRelu( unsigned relu ); 
@@ -163,9 +157,8 @@ private:
 
 private:
     /*
-     * Context / preprocessing
+     * preprocessing
      */
-    CVC4::context::Context *_context;
     Preprocessor *_preprocessor;
 
     /*
@@ -216,9 +209,9 @@ private:
     unsigned _bitmaskSize;
 
     /*
-     * Phase tracking (context-dependent)
+     * Phase tracking 
      */
-    CVC4::context::CDHashMap<unsigned, ReLURuntimeState, std::hash<unsigned>> *_seenPhase;
+    std::unordered_map<unsigned, ReLURuntimeState> _currentPhases;
 
     unsigned _recordedConflicts; // total conflicts recorded over ICA lifetime for stats
 };
