@@ -61,6 +61,9 @@ public:
      */
     void setNewEpsilon( double epsilon );
 
+    void setRecordConflicts( bool recordConflicts );
+    bool getRecordConflicts() const;
+
     /*
      * For ancestry-based inheritance: set current query ID, must be > 0 
      */
@@ -138,7 +141,7 @@ private:
     unsigned _createNewSatVarForRelu( unsigned relu ); 
     unsigned _satVarToReluIndex( unsigned satVar ) const;
 
-    void _encodeConflictClause( const Conflict &conflict );
+    void _encodeConflictClause( const Conflict &conflict, bool encodeNow );
 
     int  _phaseToLit( unsigned oldVar, ReLUState phase ) const;
     bool _litToPhase( int lit, unsigned &oldVar, ReLUState &phase ) const;
@@ -170,6 +173,7 @@ private:
      * Query ID / ancestry tracking
      */
     unsigned _currentQueryId;
+    bool _recordedConflictsForCurrent;
     bool _queryIdWasSet;
     std::vector<unsigned> _ancestorIds;
     bool _ancestorsWasSet;
@@ -197,6 +201,7 @@ private:
      */
     std::unique_ptr<CaDiCaL::Solver> _cadical;
     bool _conflictsExistForCurrent;
+    bool _relevantConflictsImported;
 
     std::unordered_map<unsigned, unsigned> _reluIndexToSatVarMap;
     Vector<unsigned> _satVarToReluIndexMap;
@@ -207,6 +212,7 @@ private:
      */
     std::vector<Bitmask> _minimalConflictBitmasks;
     unsigned _bitmaskSize;
+    std::size_t _threshold;
 
     /*
      * Phase tracking 

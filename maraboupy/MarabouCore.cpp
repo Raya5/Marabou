@@ -1013,7 +1013,9 @@ PYBIND11_MODULE( MarabouCore, m )
         .def("setAncestors", &IncrementalConflictAnalyser::setAncestors)
         .def( "notifySolvingStarted", &IncrementalConflictAnalyser::notifySolvingStarted )
         .def( "notifySolved", &IncrementalConflictAnalyser::notifySolved )
-        .def( "getRecordedConflictCount", &IncrementalConflictAnalyser::getRecordedConflictCount );
+        .def( "getRecordedConflictCount", &IncrementalConflictAnalyser::getRecordedConflictCount )
+        .def( "setRecordConflicts", &IncrementalConflictAnalyser::setRecordConflicts )
+        .def( "getRecordConflicts", &IncrementalConflictAnalyser::getRecordConflicts );
 
     m.def(
         "buildIncrementalConflictAnalyser",

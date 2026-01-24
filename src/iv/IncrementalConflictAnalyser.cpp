@@ -9,6 +9,7 @@ IncrementalConflictAnalyser::IncrementalConflictAnalyser( bool reuseAllConflicts
     : _preprocessor( nullptr )
     , _currentEpsilon( -1.0 )
     , _currentQueryId( 0 )
+    , _recordedConflictsForCurrent( true )
     , _queryIdWasSet( false )
     , _ancestorIds()
     , _ancestorsWasSet( false )
@@ -16,12 +17,15 @@ IncrementalConflictAnalyser::IncrementalConflictAnalyser( bool reuseAllConflicts
     , _autoInheritance( autoInheritance )
     , _cadical( nullptr )
     , _conflictsExistForCurrent( false )
+    , _relevantConflictsImported( false )
     , _bitmaskSize( 0 )
+    , _threshold( 0 )
     , _recordedConflicts( 0 )
 {
     if ( !_autoInheritance ) ASSERT( _clearBetweenRuns );
     if ( !_clearBetweenRuns )
     {
+        _relevantConflictsImported = true;
         ASSERT (_minimalConflictBitmasks.size() == 0);
         _initializeSatSolver();
     }
@@ -46,7 +50,6 @@ void IncrementalConflictAnalyser::syncWithEngineBoundManager( BoundManager *boun
     if ( _reluIndexToSatVarMap.empty() )
         return;
     
-    unsigned missedUpdateCounter = 0;
     for ( const auto &it : _reluIndexToSatVarMap )
     {
         const unsigned oldVar = it.first;
@@ -57,8 +60,7 @@ void IncrementalConflictAnalyser::syncWithEngineBoundManager( BoundManager *boun
         const double lb = boundManager->getLowerBound( newVar );
         const double ub = boundManager->getUpperBound( newVar );
 
-        const ReLURuntimeState rt = _getReluPhase( oldVar );
-        ASSERT( rt == ReLURuntimeState::Unstable );
+        ASSERT( _getReluPhase( oldVar ) == ReLURuntimeState::Unstable );
 
 
         // If interval entirely >= 0 => Active
@@ -67,18 +69,15 @@ void IncrementalConflictAnalyser::syncWithEngineBoundManager( BoundManager *boun
 
             _notifyLowerBoundUpdate(newVar, -INFINITY, lb);
             _notifyUpperBoundUpdate(newVar, +INFINITY, ub);
-            missedUpdateCounter++;
         }
         else if ( !FloatUtils::gt( ub, 0.0 ) )
         {
             _notifyUpperBoundUpdate(newVar, +INFINITY, ub);
-            missedUpdateCounter++;
         }
         else if ( !FloatUtils::lt( lb, 0.0 ) )
         {
 
             _notifyLowerBoundUpdate(newVar, -INFINITY, lb);
-            missedUpdateCounter++;
         }
         else
         {
@@ -102,6 +101,16 @@ void IncrementalConflictAnalyser::setID( unsigned id )
     _queryIdWasSet = true;
 }
 
+void IncrementalConflictAnalyser::setRecordConflicts( bool recordConflicts )
+{
+    _recordedConflictsForCurrent = recordConflicts;
+}
+
+bool IncrementalConflictAnalyser::getRecordConflicts() const
+{
+    return _recordedConflictsForCurrent;
+}
+
 void IncrementalConflictAnalyser::setAncestors(
     const std::vector<unsigned> &ancestors )
 {
@@ -114,7 +123,13 @@ void IncrementalConflictAnalyser::addConflict(
     const std::vector<bool> &isActiveList )
 {
     ASSERT( vars.size() == isActiveList.size() );
-
+    if ( vars.size() > _threshold )
+    {
+        return;
+    }
+    if ( !_recordedConflictsForCurrent )
+        throw MarabouError( MarabouError::DEBUGGING_ERROR,
+                            "Attempted to add conflict while recording disabled." );
     // Strategy-specific metadata must be set
     if ( _autoInheritance )
     {
@@ -123,6 +138,12 @@ void IncrementalConflictAnalyser::addConflict(
     }
     else
     {
+        if ( !_relevantConflictsImported ){
+        ASSERT ( _clearBetweenRuns );
+        _initializeSatSolver();
+        _importRelevantConflicts();
+        _relevantConflictsImported = true;
+        }
         // Ancestry mode
         ASSERT( !_autoInheritance ); // todo remove
         ASSERT( _queryIdWasSet );
@@ -137,26 +158,25 @@ void IncrementalConflictAnalyser::addConflict(
         return;
 
     // Store conflict under the appropriate provenance key
-    Conflict *stored = nullptr;
 
     if ( _autoInheritance )
     {
         auto &bucket = _conflictsByEpsilon[_currentEpsilon];
         bucket.emplace_back( vars, isActiveList );
-        stored = &bucket.back();
     }
     else
     {
         auto &bucket = _conflictsByQueryId[_currentQueryId];
         bucket.emplace_back( vars, isActiveList );
-        stored = &bucket.back();
     }
-
-    ASSERT( stored );
     _recordedConflicts++;
-
     // Encode immediately into current SAT solver (so future calls in this run see it)
-    _encodeConflictClause( *stored );
+
+    for ( unsigned i = 0; i < vars.size(); ++i )
+    {
+        const unsigned oldVar = vars[i];
+        _reluIndexToSatVarForce( oldVar );
+    }
 
     // Track minimality bitmask for this run
     IncrementalConflictAnalyser::Bitmask fullMask =
@@ -225,76 +245,99 @@ void IncrementalConflictAnalyser::_notifyUpperBoundUpdate( unsigned newVar,
 
 bool IncrementalConflictAnalyser::getImpliedTighteningsFromSat( List<Tightening> &tightenings )
 {
+    if ( !_relevantConflictsImported ){
+        ASSERT ( _clearBetweenRuns );
+        _initializeSatSolver();
+        _importRelevantConflicts();
+        _relevantConflictsImported = true;
+    }
     bool noConflict;
     if ( !_conflictsExistForCurrent )
         noConflict = true;
     else
     {
-        ASSERT( _currentEpsilon >= 0.0 );
+        ASSERT( _currentEpsilon >= 0.0 or !_autoInheritance );
         ASSERT( _preprocessor );
         
         // Add assumptions for all currently fixed ReLUs in our SAT mapping.
         // IMPORTANT: ICA stores phases keyed by OLD vars, and the SAT mapping keys are OLD vars.
+        bool someAssumed = false;
+
         for ( const auto &entry : _reluIndexToSatVarMap )
         {   
             const unsigned oldVar = entry.first;
             const ReLURuntimeState rt = _getReluPhase( oldVar );
 
-            if ( rt == ReLURuntimeState::Active )
+            if ( rt == ReLURuntimeState::Active ){
                 _cadical->assume( _phaseToLit( oldVar, ReLUState::Active ) );
-            else if ( rt == ReLURuntimeState::Inactive )
+                someAssumed = true;
+            }
+            else if ( rt == ReLURuntimeState::Inactive ){
                 _cadical->assume( _phaseToLit( oldVar, ReLUState::Inactive ) );
+                someAssumed = true;
+            }
             // Zero/Unstable/Unseen: no assumption
         }
 
-        // Propagate under assumptions
-        const int res = _cadical->propagate();
-
-        // 20 means conflict under assumptions
-        if ( res == 20 )
+        if ( !someAssumed )
         {
-            noConflict = false;
+            // No assumptions to propagate
+            noConflict = true;
+
         }
         else
         {
-            // Query entailed literals (implications) — same as DA
-            std::vector<int> implicants;
-            _cadical->implied( implicants );
+            // Propagate under assumptions
+            const int res = _cadical->propagate();
 
-            for ( int lit : implicants )
+            // 20 means conflict under assumptions
+            if ( res == 20 )
             {
-                unsigned oldVar = 0;
-                ReLUState impliedPhase;
-
-                const bool success = _litToPhase( lit, oldVar, impliedPhase );
-                ASSERT( success );
-
-                const ReLURuntimeState currentRt = _getReluPhase( oldVar );
-
-                // Skip if already fixed consistently
-                if ( ( currentRt == ReLURuntimeState::Active   && impliedPhase == ReLUState::Active ) ||
-                    ( currentRt == ReLURuntimeState::Inactive && impliedPhase == ReLUState::Inactive ) )
-                {
-                    continue;
-                }
-
-                // Contradiction: SAT implies opposite of runtime-fixed value
-                if ( ( currentRt == ReLURuntimeState::Active   && impliedPhase == ReLUState::Inactive ) ||
-                    ( currentRt == ReLURuntimeState::Inactive && impliedPhase == ReLUState::Active ) )
-                {
-                    ASSERT( false );
-                }
-
-                // Zero treated as neither active nor inactive; do not force further
-                if ( currentRt == ReLURuntimeState::Zero )
-                {
-                    continue;
-                }
-                // Emit tightening in ENGINE var space (NEW var id)
-                _emitTighteningsForImpliedPhase( oldVar, impliedPhase, tightenings );
-
+                noConflict = false;
             }
-            noConflict = true;
+            else
+            {
+                // Query entailed literals (implications) — same as DA
+                std::vector<int> implicants;
+                _cadical->implied( implicants );
+
+                for ( int lit : implicants )
+                {
+                    unsigned oldVar = 0;
+                    ReLUState impliedPhase;
+
+                    const bool success = _litToPhase( lit, oldVar, impliedPhase );
+                    if ( !success )
+                        throw MarabouError( MarabouError::DEBUGGING_ERROR,
+                                            "Failed to decode implied literal from SAT solver." );
+
+                    const ReLURuntimeState currentRt = _getReluPhase( oldVar );
+
+                    // Skip if already fixed consistently
+                    if ( ( currentRt == ReLURuntimeState::Active   && impliedPhase == ReLUState::Active ) ||
+                        ( currentRt == ReLURuntimeState::Inactive && impliedPhase == ReLUState::Inactive ) )
+                    {
+                        continue;
+                    }
+
+                    // Contradiction: SAT implies opposite of runtime-fixed value
+                    if ( ( currentRt == ReLURuntimeState::Active   && impliedPhase == ReLUState::Inactive ) ||
+                        ( currentRt == ReLURuntimeState::Inactive && impliedPhase == ReLUState::Active ) )
+                    {
+                        ASSERT( false );
+                    }
+
+                    // Zero treated as neither active nor inactive; do not force further
+                    if ( currentRt == ReLURuntimeState::Zero )
+                    {
+                        continue;
+                    }
+                    // Emit tightening in ENGINE var space (NEW var id)
+                    _emitTighteningsForImpliedPhase( oldVar, impliedPhase, tightenings );
+
+                }
+                noConflict = true;
+            }
         }
     }
     _currentPhases.clear();
@@ -383,16 +426,18 @@ void IncrementalConflictAnalyser::notifySolvingStarted( unsigned numQueryVariabl
         ASSERT( _ancestorsWasSet );
     }
     if (_bitmaskSize == 0)
-        _bitmaskSize = 2 * numQueryVariables + 3;
+    {
+        _bitmaskSize = numQueryVariables + 1;
+        _threshold = std::max<std::size_t>(5, static_cast<std::size_t>(_bitmaskSize * 0.01));
+    }
 
     // Bitmask must be large enough to index all variables
-    ASSERT( _bitmaskSize >= 2 * numQueryVariables + 3 );
+    ASSERT( _bitmaskSize >= numQueryVariables + 1 );
 
-    if ( _clearBetweenRuns )
+    if ( _clearBetweenRuns && _relevantConflictsImported)
     {
-        ASSERT (_minimalConflictBitmasks.size() == 0);
-        _initializeSatSolver();
-        _importRelevantConflicts();
+        throw MarabouError( MarabouError::DEBUGGING_ERROR,
+                            "Conflicts already imported for this run." );
     }
 }
 
@@ -419,21 +464,18 @@ void IncrementalConflictAnalyser::notifySolved()
     }
     _preprocessor = nullptr;
     _conflictsExistForCurrent = false;
-
+    
     if ( _clearBetweenRuns )
     {
         _minimalConflictBitmasks.clear();
+        _relevantConflictsImported = false;
     }
 }
 
 void IncrementalConflictAnalyser::_initializeSatSolver()
 {
     _cadical = std::make_unique<CaDiCaL::Solver>();
-
-    _satVarToReluIndexMap.clear();
-    _reluIndexToSatVarMap.clear();
-    // Reserve index 0 so SAT vars 1..N map naturally to _satVarToReluIndexMap[1..N]
-    _satVarToReluIndexMap.append( (unsigned)-1 );
+    _cadical->declare_more_variables( _reluIndexToSatVarMap.size() + 1);
 }
 
 bool IncrementalConflictAnalyser::_isNonMinimalConflict(
@@ -512,10 +554,11 @@ unsigned IncrementalConflictAnalyser::_reluIndexToSatVarForce( unsigned relu )
 unsigned IncrementalConflictAnalyser::_createNewSatVarForRelu( unsigned relu )
 {
     // SAT vars start at 1; index 0 is reserved in _satVarToReluIndex
-    const unsigned newSatVar = _cadical->declare_one_more_variable();
+    unsigned newSatVar = _satVarToReluIndexMap.size();
+    if ( !_clearBetweenRuns )
+         _cadical->declare_one_more_variable();
 
     ASSERT( newSatVar > 0 );
-    ASSERT( newSatVar == _satVarToReluIndexMap.size() );
 
     _reluIndexToSatVarMap[relu] = newSatVar;
     _satVarToReluIndexMap.append( relu );
@@ -531,7 +574,7 @@ unsigned IncrementalConflictAnalyser::_satVarToReluIndex( unsigned satVar ) cons
 }
 
 
-void IncrementalConflictAnalyser::_encodeConflictClause( const Conflict &conflict )
+void IncrementalConflictAnalyser::_encodeConflictClause( const Conflict &conflict, bool encodeNow )
 {
     ASSERT( _cadical );
 
@@ -546,20 +589,22 @@ void IncrementalConflictAnalyser::_encodeConflictClause( const Conflict &conflic
         const bool active = isActive[i];
 
         // Create SAT var if missing
-        const unsigned satVar = _reluIndexToSatVarForce( oldVar );
+        const unsigned satVar = _reluIndexToSatVar( oldVar );
 
         ASSERT( satVar > 0 );
 
         // Block the conflicting literal
         // If conflict says "active", we add ¬x; if "inactive", add x
         const int lit = active ? -(int)satVar : (int)satVar;
-
-        _cadical->add( lit );
+        if ( encodeNow )
+            _cadical->add( lit );
     }
 
     // Terminate clause
-    _cadical->add( 0 );
-    _conflictsExistForCurrent = true;
+    if ( encodeNow ) {
+        _cadical->add( 0 );
+        _conflictsExistForCurrent = true;
+    }
 
 }
 
@@ -587,9 +632,9 @@ void IncrementalConflictAnalyser::_importRelevantConflicts()
 
 void IncrementalConflictAnalyser::_importRelevantConflictsEpsilon()
 {
-    size_t total = 0;
-    for ( const auto &kv : _conflictsByEpsilon )
-        total += kv.second.size();
+    // size_t total = 0;
+    // for ( const auto &kv : _conflictsByEpsilon )
+    //     total += kv.second.size();
 
     unsigned imported = 0;
 
@@ -598,15 +643,15 @@ void IncrementalConflictAnalyser::_importRelevantConflictsEpsilon()
     {
         for ( const Conflict &conflict : it->second )
         {
-            _encodeConflictClause( conflict );
+            _encodeConflictClause( conflict , true);
             ++imported;
         }
     }
-    printf(
-        "[ICA][IV] _importRelevantConflictsEpsilon: currentEpsilon=%.6f, totalConflicts=%zu, imported=%u\n",
-        _currentEpsilon,
-        total,
-        imported );
+    // printf(
+    //     "[ICA][IV] _importRelevantConflictsEpsilon: currentEpsilon=%.6f, totalConflicts=%zu, imported=%u\n",
+    //     _currentEpsilon,
+    //     total,
+    //     imported );
 }
 
 void IncrementalConflictAnalyser::_importRelevantConflictsAncestry()
@@ -616,19 +661,19 @@ void IncrementalConflictAnalyser::_importRelevantConflictsAncestry()
     ASSERT( _queryIdWasSet );
     ASSERT( _currentQueryId != 0 );
 
-    size_t total = 0;
-    for ( unsigned ancestorId : _ancestorIds )
-    {
-        auto it = _conflictsByQueryId.find( ancestorId );
-        if ( it != _conflictsByQueryId.end() )
-            total += it->second.size();
-    }
+    // size_t total = 0;
+    // for ( unsigned ancestorId : _ancestorIds )
+    // {
+    //     auto it = _conflictsByQueryId.find( ancestorId );
+    //     if ( it != _conflictsByQueryId.end() )
+    //         total += it->second.size();
+    // }
 
-    printf(
-        "[ICA][IV] _importRelevantConflictsAncestry: currentQueryId=%u, numAncestors=%zu, totalConflicts=%zu\n",
-        _currentQueryId,
-        _ancestorIds.size(),
-        total );
+    // printf(
+    //     "[ICA][IV] _importRelevantConflictsAncestry: currentQueryId=%u, numAncestors=%zu, totalConflicts=%zu\n",
+    //     _currentQueryId,
+    //     _ancestorIds.size(),
+    //     total );
 
     unsigned imported = 0;
 
@@ -640,14 +685,14 @@ void IncrementalConflictAnalyser::_importRelevantConflictsAncestry()
 
         for ( const Conflict &conflict : it->second )
         {
-            _encodeConflictClause( conflict );
+            _encodeConflictClause( conflict , true);
             ++imported;
         }
     }
 
-    printf(
-        "[ICA][IV] _importRelevantConflictsAncestry done: imported=%u\n",
-        imported );
+    // printf(
+    //     "[ICA][IV] _importRelevantConflictsAncestry done: imported=%u\n",
+    //     imported );
 }
 
 unsigned IncrementalConflictAnalyser::getRecordedConflictCount() const
