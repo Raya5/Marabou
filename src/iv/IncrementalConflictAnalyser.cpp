@@ -22,6 +22,7 @@ IncrementalConflictAnalyser::IncrementalConflictAnalyser( bool reuseAllConflicts
     , _threshold( 0 )
     , _recordedConflicts( 0 )
 {
+    _satVarToReluIndexMap.append( int(INFINITY) ); // index 0 unused
     if ( !_autoInheritance ) ASSERT( _clearBetweenRuns );
     if ( !_clearBetweenRuns )
     {
@@ -44,6 +45,8 @@ void IncrementalConflictAnalyser::setPreprocessor( Preprocessor *preprocessor )
 
 void IncrementalConflictAnalyser::syncWithEngineBoundManager( BoundManager *boundManager )
 {
+    if ( !_conflictsExistForCurrent )
+        return;
     ASSERT( _preprocessor );
 
     // If no mapping yet, nothing to seed
