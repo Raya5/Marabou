@@ -571,7 +571,8 @@ void loadQuery( std::string filename, InputQuery &inputQuery )
 std::shared_ptr<IncrementalConflictAnalyser>
 buildIncrementalConflictAnalyser( bool reuseAllConflicts, bool autoInheritance )
 {
-    return std::make_shared<IncrementalConflictAnalyser>( reuseAllConflicts, autoInheritance );
+    assert( reuseAllConflicts && !autoInheritance );
+    return std::make_shared<IncrementalConflictAnalyser>( );
 }
 
 // Code necessary to generate Python library

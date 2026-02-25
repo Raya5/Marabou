@@ -5,7 +5,7 @@
 
 #include <cassert>
 
-IncrementalConflictAnalyser::IncrementalConflictAnalyser( bool reuseAllConflicts,  bool autoInheritance )
+IncrementalConflictAnalyser::IncrementalConflictAnalyser()
     : _preprocessor( nullptr )
     , _currentEpsilon( -1.0 )
     , _currentQueryId( 0 )
@@ -13,8 +13,8 @@ IncrementalConflictAnalyser::IncrementalConflictAnalyser( bool reuseAllConflicts
     , _queryIdWasSet( false )
     , _ancestorIds()
     , _ancestorsWasSet( false )
-    , _clearBetweenRuns( reuseAllConflicts )
-    , _autoInheritance( autoInheritance )
+    , _clearBetweenRuns( true )
+    , _autoInheritance( false )
     , _cadical( nullptr )
     , _conflictsExistForCurrent( false )
     , _relevantConflictsImported( false )
@@ -22,6 +22,12 @@ IncrementalConflictAnalyser::IncrementalConflictAnalyser( bool reuseAllConflicts
     , _threshold( 0 )
     , _recordedConflicts( 0 )
 {
+    if ( _autoInheritance || !_clearBetweenRuns )
+    {
+        throw MarabouError( MarabouError::DEBUGGING_ERROR,
+                            "Currently only ancestry-based inheritance with clearBetweenRuns=true is supported." );
+    }
+
     _satVarToReluIndexMap.append( int(INFINITY) ); // index 0 unused
     if ( !_autoInheritance ) ASSERT( _clearBetweenRuns );
     if ( !_clearBetweenRuns )

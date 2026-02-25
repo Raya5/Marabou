@@ -44,7 +44,7 @@ public:
      *   false -> ONLY_LAST  (keep CaDiCaL state across solves)
      *   true  -> ALL_LAST   (reset CaDiCaL per epsilon and re-import conflicts)
      */
-    explicit IncrementalConflictAnalyser( bool reuseAllConflicts, bool autoInheritance );
+    explicit IncrementalConflictAnalyser();
 
 
     ~IncrementalConflictAnalyser();
