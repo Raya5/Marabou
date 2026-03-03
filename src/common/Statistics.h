@@ -78,6 +78,7 @@ public:
 
         // For incremental solving: number of tightenings
         NUM_INCREMENTAL_TIGHTENINGS,
+        NUM_CONFLICTS_SIZE_GE_2,
     };
 
     enum StatisticsLongAttribute {

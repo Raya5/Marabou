@@ -905,6 +905,8 @@ PYBIND11_MODULE( MarabouCore, m )
                 Statistics::StatisticsUnsignedAttribute::NUM_ACTIVE_PL_CONSTRAINTS )
         .value( "NUM_INCREMENTAL_TIGHTENINGS",
                 Statistics::StatisticsUnsignedAttribute::NUM_INCREMENTAL_TIGHTENINGS )
+        .value( "NUM_CONFLICTS_SIZE_GE_2",
+                Statistics::StatisticsUnsignedAttribute::NUM_CONFLICTS_SIZE_GE_2 )
         .export_values();
     py::enum_<Statistics::StatisticsLongAttribute>( m, "StatisticsLongAttribute" )
         .value( "NUM_TIGHTENINGS_FROM_EXPLICIT_BASIS",

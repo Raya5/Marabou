@@ -80,7 +80,7 @@ public:
      * vars / isActiveList:
      *   parallel vectors describing a phase conflict
      */
-    void addConflict( const std::vector<unsigned> &vars,
+    bool addConflict( const std::vector<unsigned> &vars,
                       const std::vector<bool> &isActiveList );
 
 

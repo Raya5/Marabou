@@ -127,14 +127,14 @@ void IncrementalConflictAnalyser::setAncestors(
     _ancestorsWasSet = true;
 }
 
-void IncrementalConflictAnalyser::addConflict(
+bool IncrementalConflictAnalyser::addConflict(
     const std::vector<unsigned> &vars,
     const std::vector<bool> &isActiveList )
 {
     ASSERT( vars.size() == isActiveList.size() );
     if ( vars.size() > _threshold )
     {
-        return;
+        return false;
     }
     if ( !_recordedConflictsForCurrent )
         throw MarabouError( MarabouError::DEBUGGING_ERROR,
@@ -164,7 +164,7 @@ void IncrementalConflictAnalyser::addConflict(
     IncrementalConflictAnalyser::Bitmask subMask =
         _buildConflictSubBitmask( vars, isActiveList );
     if ( _isNonMinimalConflict( subMask ) )
-        return;
+        return false;
 
     // Store conflict under the appropriate provenance key
 
@@ -191,6 +191,7 @@ void IncrementalConflictAnalyser::addConflict(
     IncrementalConflictAnalyser::Bitmask fullMask =
         _buildConflictBitmask( vars, isActiveList );
     _minimalConflictBitmasks.push_back( fullMask );
+    return true;
 }
 
 

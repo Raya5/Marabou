@@ -4201,7 +4201,9 @@ void Engine::recordConflictFromCurrentDecisions()
     }
 
     ASSERT( oldVars.size() == isActiveList.size() );
-    _incrementalConflictAnalyser->addConflict( oldVars, isActiveList );
+    bool success = _incrementalConflictAnalyser->addConflict( oldVars, isActiveList );
+    if ( success && oldVars.size() >2 )
+        _statistics.incUnsignedAttribute( Statistics::NUM_CONFLICTS_SIZE_GE_2 );
 
     // printf( "[Engine][IV] Stored conflict of size %zu: ", oldVars.size() );
     // for ( size_t i = 0; i < oldVars.size(); ++i )
