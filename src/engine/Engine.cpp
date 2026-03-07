@@ -465,7 +465,8 @@ bool Engine::solve( double timeoutInSeconds )
             // If we're at level 0, the whole query is unsat.
             if ( _produceUNSATProofs )
                 explainSimplexFailure();
-
+            if ( _searchTreeHandler.getStackDepth() >= 1 )
+                _statistics.incUnsignedAttribute( Statistics::NUM_CONFLICTS );
             if ( _incrementalMode )
             {
                 recordConflictFromCurrentDecisions();
@@ -4201,9 +4202,7 @@ void Engine::recordConflictFromCurrentDecisions()
     }
 
     ASSERT( oldVars.size() == isActiveList.size() );
-    bool success = _incrementalConflictAnalyser->addConflict( oldVars, isActiveList );
-    if ( success && oldVars.size() >2 )
-        _statistics.incUnsignedAttribute( Statistics::NUM_CONFLICTS_SIZE_GE_2 );
+    _incrementalConflictAnalyser->addConflict( oldVars, isActiveList );
 
     // printf( "[Engine][IV] Stored conflict of size %zu: ", oldVars.size() );
     // for ( size_t i = 0; i < oldVars.size(); ++i )
