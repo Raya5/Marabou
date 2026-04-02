@@ -1,0 +1,3 @@
+
+sbatch run_explainability_slurm.sh
+sbatch run_robustness_slurm.sh

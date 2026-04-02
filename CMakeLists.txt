@@ -209,6 +209,38 @@ if (NOT MSVC AND ${ENABLE_OPENBLAS})
   target_include_directories(${OPENBLAS_LIB} INTERFACE ${OPENBLAS_DIR}/installed/include)
 endif()
 
+#############
+## CaDiCaL ##
+#############
+
+if (${ENABLE_INCREMENTAL})
+  message(STATUS "Using CaDiCaL for incremental/conflict functionality")
+  add_compile_definitions(ENABLE_INCREMENTAL)
+
+  set(CADICAL_DEFAULT_DIR "${TOOLS_DIR}/cadical")
+  if (NOT CADICAL_DIR)
+      set(CADICAL_DIR ${CADICAL_DEFAULT_DIR})
+  endif()
+
+  if(NOT EXISTS "${CADICAL_DIR}/build/libcadical.a")
+    message("Can't find CaDiCaL, installing. If CaDiCaL is installed please use the CADICAL_DIR parameter to pass the path")
+    if (${CADICAL_DIR} STREQUAL ${CADICAL_DEFAULT_DIR})
+      message("Installing CaDiCaL")
+      execute_process(COMMAND ${TOOLS_DIR}/download_cadical.${SCRIPT_EXTENSION})
+    else()
+      message(FATAL_ERROR "Can't find CaDiCaL in the supplied directory")
+    endif()
+  endif()
+
+  set(CADICAL_LIB cadical)
+  add_library(${CADICAL_LIB} STATIC IMPORTED)
+  set_target_properties(${CADICAL_LIB} PROPERTIES
+      IMPORTED_LOCATION "${CADICAL_DIR}/build/libcadical.a")
+  target_include_directories(${CADICAL_LIB} INTERFACE "${CADICAL_DIR}/src")
+
+  list(APPEND LIBS ${CADICAL_LIB})
+endif()
+
 ###########
 ## Build ##
 ###########
