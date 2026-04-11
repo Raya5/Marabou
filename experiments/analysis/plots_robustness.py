@@ -18,17 +18,14 @@ Input format (produced by summarize_robustness.py):
 }
 
 Outputs:
-  experiments/results/analysis/plots/plot1_time_scatter.png
+  experiments/results/analysis/plots/robustness.png
   experiments/results/analysis/plots/plot1_data_used.csv
 """
-
-from __future__ import annotations
 
 import argparse
 import csv
 import json
 from pathlib import Path
-from typing import List, Dict, Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -37,12 +34,10 @@ import numpy as np
 DEFAULT_INPUT = Path("experiments/results/analysis/robustness_summary.json")
 DEFAULT_OUT_DIR = Path("experiments/results/analysis/plots")
 DEFAULT_TOTAL_TIMEOUT = 1200.0
-DEFAULT_TOTAL_TIMEOUT = 600.0
 DEFAULT_PRECISION = 0.001
-DEFAULT_PRECISION = 0.01
 
 
-def load_json(path: Path) -> Dict[str, Any]:
+def load_json(path: Path):
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -62,16 +57,6 @@ def classify_timeout(inc_t: float, nor_t: float, total_timeout: float) -> str:
     if nor_to and (not inc_to):
         return "nor_only"
     return "inc_only"
-
-
-def write_plot1_csv(rows: List[Dict[str, Any]], out_path: Path):
-    with out_path.open("w", encoding="utf-8", newline="") as f:
-        if not rows:
-            return
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
-
 
 def main():
     parser = argparse.ArgumentParser()
@@ -98,29 +83,15 @@ def main():
         inc = record["incremental"]
         nor = record["baseline"]
 
-        # Skip points that were not actually run
-        if inc.get("status") == "SkippedMisclassified" or nor.get("status") == "SkippedMisclassified":
-            print(f"[plots_robustness] skipping misclassified point {pt_idx}")
-            continue
-
-        # Skip malformed/incomplete entries
         if "time_sec" not in inc or "time_sec" not in nor:
-            print(f"[plots_robustness] skipping incomplete point {pt_idx}")
             continue
 
         inc_t_raw = float(inc["time_sec"])
         nor_t_raw = float(nor["time_sec"])
 
         cat = classify_timeout(inc_t_raw, nor_t_raw, args.total_timeout)
-        if cat == "inc_only":
-            print(
-                f"Point {pt_idx} nor only timeout: "
-                f"inc_time={inc_t_raw}, nor_time={nor_t_raw}"
-            )
 
         if inc_t_raw < args.total_timeout:
-            print(f"Point {pt_idx} inc under timeout: inc_time={inc_t_raw}, args.total_timeout={args.total_timeout}")
-            print(f"  precision width: {inc['precision_width']}, precision threshold: {args.precision}")
             assert float(inc["precision_width"]) < args.precision
         if nor_t_raw < args.total_timeout:
             assert float(nor["precision_width"]) < args.precision
@@ -147,8 +118,7 @@ def main():
             "inc_conflicts": inc["total_conflicts_recorded"],
         })
 
-    plot1_csv = args.out_dir / "plot1_data_used.csv"
-    write_plot1_csv(rows, plot1_csv)
+    assert len(rows) > 0, "No valid robustness points available for plotting."
 
     plt.rcParams.update({
         "font.size": 20,
@@ -221,12 +191,11 @@ def main():
     ax.grid(False)
     fig.tight_layout()
 
-    out_path = args.out_dir / "plot1_time_scatter.png"
+    out_path = args.out_dir / "robustness.png"
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
-    print(f"[plots_robustness] wrote: {plot1_csv}")
-    print(f"[plots_robustness] wrote: {out_path}")
+    print(f"[plots_robustness] done: {out_path}")
 
 
 if __name__ == "__main__":

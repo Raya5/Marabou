@@ -2,31 +2,28 @@
 """
 experiments/analysis/summarize_robustness.py
 
-Summarize robustness results into a single JSON file.
+Summarize robustness results into a single JSON file and a paper-style stats file.
 
 Expected input layout:
-  experiments/results/<robustness_run_dir>/point_<idx>/
+  experiments/results/robustness/full/point_<idx>/
     baseline/summary.json
     incremental/summary.json
 
-Example:
-  experiments/results/robustness_4/full_0.001_180/point_38/
-    baseline/summary.json
-    incremental/summary.json
-
-Output:
+Outputs:
   experiments/results/analysis/robustness_summary.json
+  experiments/results/analysis/stats/robustness.txt
 """
 
-from __future__ import annotations
-
-import argparse
 import json
 from pathlib import Path
 
 
-DEFAULT_INPUT_ROOT = Path("experiments/results/robustness_4/full")
-DEFAULT_OUTPUT = Path("experiments/results/analysis/robustness_summary.json")
+INPUT_ROOT = Path("experiments/results/robustness/full")
+OUTPUT_JSON = Path("experiments/results/analysis/robustness_summary.json")
+OUTPUT_STATS = Path("experiments/results/analysis/stats/robustness.txt")
+
+PRECISION = 0.001
+TOTAL_TIMEOUT = 1200.0
 
 
 def load_json(path: Path):
@@ -47,31 +44,84 @@ def load_mode_summary(mode_dir: Path):
     return load_json(summary_path)
 
 
+def mean(xs):
+    assert len(xs) > 0, "Cannot take mean of empty list"
+    return sum(xs) / len(xs)
+
+
+def is_solved(entry):
+    return (
+        entry["status"] != "SkippedMisclassified"
+        and float(entry["time_sec"]) < TOTAL_TIMEOUT
+        and float(entry["precision_width"]) < PRECISION
+    )
+
+
+def write_stats(records):
+    OUTPUT_STATS.parent.mkdir(parents=True, exist_ok=True)
+
+    baseline_times = [float(r["baseline"]["time_sec"]) for r in records]
+    incremental_times = [float(r["incremental"]["time_sec"]) for r in records]
+
+    baseline_solved = sum(1 for r in records if is_solved(r["baseline"]))
+    incremental_solved = sum(1 for r in records if is_solved(r["incremental"]))
+
+    incremental_tightenings = [
+        float(r["incremental"]["total_incremental_tightenings"]) for r in records
+    ]
+    incremental_conflicts = [
+        float(r["incremental"]["total_conflicts_recorded"]) for r in records
+    ]
+
+    baseline_time_avg = mean(baseline_times)
+    incremental_time_avg = mean(incremental_times)
+    speedup = baseline_time_avg / incremental_time_avg
+
+    with OUTPUT_STATS.open("w", encoding="utf-8") as f:
+        f.write("\\begin{table}\n")
+        f.write("\\centering\n")
+        f.write("\\begin{tabular}{lcccc}\n")
+        f.write("\\toprule\n")
+        f.write("\\;\\textbf{Method}\\; &\n")
+        f.write("\\;\\textbf{Time (s)}\\;  &\n")
+        f.write("\\;\\textbf{Solved}\\;  &\n")
+        f.write("\\;\\textbf{Propagations}\\;  &\n")
+        f.write("\\;\\textbf{Conflicts} \\;\\\\\n")
+        f.write("\\midrule\n")
+        f.write(
+            f"Non-incremental &\n"
+            f"{baseline_time_avg:.1f} &\n"
+            f"{baseline_solved} &\n"
+            f"-- &\n"
+            f"-- \\\\\n"
+        )
+        f.write(
+            f"Incremental &\n"
+            f"\\bf{{{incremental_time_avg:.1f}}} &\n"
+            f"\\bf{{{incremental_solved}}} &\n"
+            f"{mean(incremental_tightenings):.1f} &\n"
+            f"{mean(incremental_conflicts):.1f}\\\\\n"
+        )
+        f.write("\\midrule\n")
+        f.write(
+            f"\\textbf{{Speedup}} &\n"
+            f"\\textbf{{{speedup:.2f}$\\times$}} &\n"
+            f"-- &\n"
+            f"-- &\n"
+            f"-- \\\\\n"
+        )
+        f.write("\\bottomrule\n")
+        f.write("\\end{tabular}\n")
+        f.write("\\caption{Robustness radius evaluation on MNIST.}\n")
+        f.write("\\label{tab:robustness-radius-results}\n")
+        f.write("\\end{table}\n")
+
+
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--input-root",
-        type=Path,
-        default=DEFAULT_INPUT_ROOT,
-        help="Root robustness results directory containing point_* folders.",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=DEFAULT_OUTPUT,
-        help="Path to write summarized robustness JSON.",
-    )
-    args = parser.parse_args()
-
-    input_root: Path = args.input_root
-    output_path: Path = args.output
-
-    assert input_root.exists(), f"Missing input root: {input_root}"
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    assert INPUT_ROOT.exists(), f"Missing input root: {INPUT_ROOT}"
 
     point_dirs = sorted(
-        [p for p in input_root.iterdir() if p.is_dir() and p.name.startswith("point_")],
+        [p for p in INPUT_ROOT.iterdir() if p.is_dir() and p.name.startswith("point_")],
         key=parse_point_idx,
     )
 
@@ -89,6 +139,13 @@ def main():
             skipped.append(point_idx)
             continue
 
+        if (
+            baseline.get("status") == "SkippedMisclassified"
+            or incremental.get("status") == "SkippedMisclassified"
+        ):
+            skipped.append(point_idx)
+            continue
+
         record = {
             "point": point_idx,
             "baseline": baseline,
@@ -98,7 +155,7 @@ def main():
         included.append(point_idx)
 
     output = {
-        "input_root": str(input_root),
+        "input_root": str(INPUT_ROOT),
         "num_points_included": len(included),
         "num_points_skipped": len(skipped),
         "included_points": included,
@@ -106,12 +163,14 @@ def main():
         "points": records,
     }
 
-    with output_path.open("w", encoding="utf-8") as f:
+    with OUTPUT_JSON.open("w", encoding="utf-8") as f:
         json.dump(output, f, indent=2)
 
-    print(f"[summarize_robustness] included {len(included)} points")
-    print(f"[summarize_robustness] skipped {len(skipped)} points")
-    print(f"[summarize_robustness] wrote: {output_path}")
+    assert len(records) > 0, "No included robustness records to summarize"
+    write_stats(records)
+
+    print(f"[summarize_robustness] done: {OUTPUT_JSON}")
+    print(f"[summarize_robustness] done: {OUTPUT_STATS}")
 
 
 if __name__ == "__main__":

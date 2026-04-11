@@ -11,7 +11,7 @@ Expected input structure per point:
   "baseline": {
     "time_elapsed_sec": ...,
     "final_explanation_size": ...,
-    "total_conflicts": ...,
+    "total_conflicts_when_sat": ...,
     "progress_t": [...],
     "progress_size": [...],
     ...
@@ -57,10 +57,7 @@ def step_on_grid(times, sizes, grid):
     assert len(times) == len(sizes), "times and sizes must have same length"
     assert len(times) > 0, "progress curve must be non-empty"
 
-    # For each grid point, find the last event time <= grid[t]
     idx = np.searchsorted(times, grid, side="right") - 1
-
-    # Before first event, use the initial size
     idx[idx < 0] = 0
 
     return sizes[idx]
@@ -81,18 +78,11 @@ def main():
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    included_points = [p["point"] for p in points]
-    print(f"[plots_explainability] included points: {included_points}")
-
-    # We already skipped missing-incremental points in summarize_explainability.py,
-    # so "points" here are exactly the filtered set we want.
-    filtered = points
-
     grid = np.linspace(0, args.tmax, args.grid_points)
     inc_curves = []
     nor_curves = []
 
-    for record in filtered:
+    for record in points:
         inc = record["incremental"]
         nor = record["baseline"]
 
@@ -128,15 +118,11 @@ def main():
     plt.ylim(top=700)#, bottom=840)
     plt.tight_layout()
 
-    p_png = args.out_dir / "plot2_size_vs_time_mean_filtered_sat_conflict.png"
-    p_pdf = args.out_dir / "plot2_size_vs_time_mean_filtered_sat_conflict.pdf"
-
+    p_png = args.out_dir / "explainability.png"
     plt.savefig(p_png, dpi=200, bbox_inches="tight")
-    plt.savefig(p_pdf, dpi=200, bbox_inches="tight")
     plt.close()
 
-    print(f"[plots_explainability] wrote: {p_png}")
-    print(f"[plots_explainability] wrote: {p_pdf}")
+    print(f"[plots_explainability] done: {p_png}")
 
 
 if __name__ == "__main__":

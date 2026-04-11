@@ -3,10 +3,9 @@ set -euo pipefail
 
 # ============================================================
 # Smoke test for explainability
-# Runs 10 dataset points sequentially.
+# Runs 10 dataset points.
 # ============================================================
 
-NUM_POINTS=10
 SUCCESS_FILE="experiments/results/explainability/smoke/success.json"
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -19,6 +18,7 @@ echo "[smoke-expl] start $(date)"
 echo "[smoke-expl] running $NUM_POINTS points"
 
 INDICES=(27 28 31 33 34 41 57 58 61 66)
+NUM_POINTS=${#INDICES[@]}
 
 counter=1
 for i in "${INDICES[@]}"

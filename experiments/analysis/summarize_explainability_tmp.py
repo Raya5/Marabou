@@ -2,7 +2,7 @@
 """
 experiments/analysis/summarize_explainability.py
 
-Summarize explainability full-run results into a single JSON file and a paper-style stats file.
+Summarize explainability full-run results into a single JSON file.
 
 Expected input layout:
 experiments/results/explainability/full/point_<idx>/
@@ -17,10 +17,6 @@ Important:
 - Some points may only have baseline results, because incremental was skipped
   when baseline encountered no conflicts.
 - Those points are skipped from the final analysis output.
-
-Outputs:
-  experiments/results/analysis/explainability_summary.json
-  experiments/results/analysis/stats/explainability.txt
 """
 
 import csv
@@ -29,8 +25,8 @@ from pathlib import Path
 
 
 RESULTS_ROOT = Path("experiments/results/explainability/full")
-OUT_JSON = Path("experiments/results/analysis/explainability_summary.json")
-OUT_STATS = Path("experiments/results/analysis/stats/explainability.txt")
+OUT_DIR = Path("experiments/results/analysis")
+OUT_PATH = OUT_DIR / "explainability_summary.json"
 
 
 def load_json(path: Path):
@@ -93,61 +89,16 @@ def load_mode(mode_dir: Path):
 
 
 def parse_point_idx(point_dir: Path) -> int:
+    # expects point_<idx>
     name = point_dir.name
     assert name.startswith("point_"), f"Unexpected point dir name: {name}"
     return int(name[len("point_"):])
 
 
-def mean(xs):
-    assert len(xs) > 0, "Cannot take mean of empty list"
-    return sum(xs) / len(xs)
-
-
-def write_stats(records):
-    OUT_STATS.parent.mkdir(parents=True, exist_ok=True)
-
-    baseline_sizes = [float(r["baseline"]["final_explanation_size"]) for r in records]
-    incremental_sizes = [float(r["incremental"]["final_explanation_size"]) for r in records]
-
-    incremental_tightenings = [
-        float(r["incremental"]["total_incremental_tightenings"]) for r in records
-    ]
-    incremental_conflicts = [
-        float(r["incremental"]["total_conflicts_recorded"]) for r in records
-    ]
-
-    with OUT_STATS.open("w", encoding="utf-8") as f:
-        f.write("\\begin{table}[h]\n")
-        f.write("\\centering\n")
-        f.write("\\begin{tabular}{lcccc}\n")
-        f.write("\\toprule\n")
-        f.write("\\;\\textbf{Method}\\; &\n")
-        f.write("\\;\\textbf{Explanation Size}\\; &\n")
-        f.write("\\;\\textbf{Propagations}\\; &\n")
-        f.write("\\;\\textbf{Conflicts} \\;\\\\\n")
-        f.write("\\midrule\n")
-        f.write(
-            f"Non-incremental &\n"
-            f"{mean(baseline_sizes):.2f} &\n"
-            f"-- &\n"
-            f"-- \\\\\n"
-        )
-        f.write(
-            f"Incremental &\n"
-            f"\\bf{{{mean(incremental_sizes):.2f}}} &\n"
-            f"{mean(incremental_tightenings):.2f} &\n"
-            f"{mean(incremental_conflicts):.2f} \\\\\n"
-        )
-        f.write("\\bottomrule\n")
-        f.write("\\end{tabular}\n")
-        f.write("\\caption{Minimal sufficient feature set extraction on GTSRB.}\n")
-        f.write("\\label{tab:feature-set-extraction-results}\n")
-        f.write("\\end{table}\n")
-        f.write("\\vspace{-1.5em}\n")
-
-
 def main():
     assert RESULTS_ROOT.exists(), f"Missing results root: {RESULTS_ROOT}"
+
+    # OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     included = []
     skipped = []
@@ -167,7 +118,7 @@ def main():
         baseline = load_mode(baseline_dir)
         incremental = load_mode(incremental_dir)
 
-        # Skip points where incremental was not run / not saved
+        # skip points where incremental was not run / not saved
         if baseline is None or incremental is None:
             skipped.append(point_idx)
             continue
@@ -178,9 +129,6 @@ def main():
             "incremental": incremental,
         }
         records.append(record)
-        if incremental["total_conflicts_when_sat"] == 0:
-            skipped.append(point_idx)
-            continue
         included.append(point_idx)
 
     output = {
@@ -191,14 +139,14 @@ def main():
         "points": records,
     }
 
-    with open(OUT_JSON, "w", encoding="utf-8") as f:
+    with open(OUT_PATH, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2)
 
-    assert len(records) > 0, "No included explainability records to summarize"
-    write_stats(records)
-
-    print(f"[summarize_explainability] done: {OUT_JSON}")
-    print(f"[summarize_explainability] done: {OUT_STATS}")
+    print(f"[summarize_explainability] included {len(included)} points")
+    print(f"[summarize_explainability] skipped {len(skipped)} points")
+    print(f"[summarize_explainability] included points: {included}")
+    print(f"[summarize_explainability] skipped points: {skipped}")
+    print(f"[summarize_explainability] wrote: {OUT_PATH}")
 
 
 if __name__ == "__main__":

@@ -3,10 +3,14 @@ set -euo pipefail
 
 # ============================================================
 # Subset run for robustness
-# Runs NUM_POINTS dataset points sequentially.
+# Runs NUM_POINTS dataset points.
 # ============================================================
 
 NUM_POINTS=100
+
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+REPO_DIR="$( cd "$SCRIPT_DIR/../.." && pwd )"
+cd "$REPO_DIR"
 
 echo "[subset-rob] start $(date)"
 echo "[subset-rob] running $NUM_POINTS points"

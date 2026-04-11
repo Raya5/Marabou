@@ -513,20 +513,19 @@ def main():
     smoke_or_full = "smoke" if args.smoke else "full"
     run_id = str(idx)  # you locked: run_id = point index
     root = Path("experiments") / "results" / "explainability" / smoke_or_full / f"point_{run_id}"
+    root.mkdir(parents=True, exist_ok=True)
 
 
     baseline_dir = root / "baseline"
     incremental_dir = root / "incremental"
-    baseline_dir.mkdir(parents=True, exist_ok=True)
-    incremental_dir.mkdir(parents=True, exist_ok=True)
+    baseline_dir.mkdir(exist_ok=True)
+    incremental_dir.mkdir(exist_ok=True)
 
     # Load input
     assert dataset == "gtsrb", f"Only gtsrb is supported in this minimal version, got {dataset}"
     x_test = load_gtsrb_x_test(gtsrb_pickle)
     image = x_test[idx]
 
-    # Run baseline then incremental (simple first; add gating later if you want)
-    # for inc, out_dir in [(False, str(baseline_dir)), (True, str(incremental_dir))]:
     for inc, out_dir in [(True, str(incremental_dir)), (False, str(baseline_dir))]:
         verix = VeriXMinimal(
             dataset=dataset,
@@ -537,9 +536,6 @@ def main():
         )
         verix.new_traversal(epsilon=epsilon * 0.1)
         verix.compute_explanation(epsilon=epsilon)
-        # if not inc and verix.total_conflicts_when_sat == 0:
-        #     print("Baseline encountered no significant SAT conflicts; skipping incremental run.")
-        #     break
         if inc and smoke_or_full == "smoke":
             smoke_dir = Path("experiments") / "results" / "explainability" / smoke_or_full 
             smoke_dir.mkdir(parents=True, exist_ok=True)

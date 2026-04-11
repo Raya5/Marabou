@@ -43,30 +43,24 @@ from maraboupy.MarabouCore import StatisticsUnsignedAttribute  # noqa: E402
 
 @dataclass(frozen=True)
 class RobustnessConfig:
-    # onnx_path: str = "experiments/data/mnist.onnx"   # adjust to your final path
-    onnx_path: str = "/cs/labs/guykatz/rayae/iv/models/mnist4.onnx"   # adjust to your final path
+    onnx_path: str = "experiments/data/mnist.onnx"
     eps_min: float = 0.0
-    # eps_max: float = 0.5
-    eps_max: float = 0.2
-    # precision: float = 1e-3
-    precision: float = 0.01 
-    # timeout_per_query_sec: float = 120.0
-    # all_timeout_sec: float = 1200.0
-    timeout_per_query_sec: float = 300
-    all_timeout_sec: float = 7200.0 #, 2 hours
+    eps_max: float = 0.5
+    precision: float = 1e-3
+    timeout_per_query_sec: float = 120.0
+    all_timeout_sec: float = 1200.0
     margin: float = 0.0
     input_min: float = 0.0
     input_max: float = 1.0
 
-    # smoke override (kept minimal + deterministic)
+    # smoke override
     smoke_timeout_per_query_sec: float = 120.0
     smoke_all_timeout_sec: float = 120.0
     smoke_precision: float = 5e-2
 
 
 # ---------------------------------------------------------------------
-# MNIST loading (simple; uses fetch_openml in your old code)
-# If you want to drop sklearn later, we can switch to torchvision MNIST.
+# MNIST loading 
 # ---------------------------------------------------------------------
 
 def load_mnist_test_openml() -> Tuple[np.ndarray, np.ndarray]:
@@ -150,7 +144,6 @@ def add_output_constraints_for_misclassification(network, target_label: int, mar
 
 def build_options(timeout_per_query_sec: float, incremental: bool):
     options = Marabou.createOptions(timeoutInSeconds=int(timeout_per_query_sec))
-    # keep it quiet + deterministic-ish
     options._verbosity = 0
     options._incremental = bool(incremental)
     # Ensure DnC / SNC is off (important for incremental)
@@ -213,7 +206,6 @@ def solve_at_epsilon(
       conflicts_recorded (only meaningful for incremental)
       min_sat_epsilon (for SAT; else None)
     """
-    # print(".", end="") 
     lb, ub = compute_input_box_bounds(point_flat, epsilon=epsilon, input_min=0.0, input_max=1.0)
 
     # incremental epsilon hook if available
@@ -500,7 +492,7 @@ def main():
     is_correct = (pred_label == true_label)
 
     tier = "smoke" if args.smoke else "full"
-    out_root =  Path("experiments") / "results" / "robustness_4" / tier / f"point_{db_idx}"
+    out_root =  Path("experiments") / "results" / "robustness" / tier / f"point_{db_idx}"
 
     # If misclassified: write a baseline+incremental summary with skipped status (easy downstream)
     if not is_correct:
@@ -516,7 +508,7 @@ def main():
                 "predicted_label": int(pred_label),
                 "status": "SkippedMisclassified",
             })
-        print(f"[OK] point_{db_idx} skipped (misclassified). Wrote summaries under {out_root}")
+        # print(f"[OK] point_{db_idx} skipped (misclassified). Wrote summaries under {out_root}")
         return
 
     # Run baseline then incremental
