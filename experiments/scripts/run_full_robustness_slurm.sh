@@ -17,10 +17,6 @@ set -euo pipefail
 
 INDEX="${SLURM_ARRAY_TASK_ID}"
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-REPO_DIR="$( cd "$SCRIPT_DIR/../.." && pwd )"
-cd "$REPO_DIR"
-
 mkdir -p slurm_outputs
 
 echo "[slurm-rob] start $(date)"

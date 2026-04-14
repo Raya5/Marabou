@@ -52,11 +52,38 @@ Run small sanity tests (< 1.5 hours):
 bash experiments/scripts/run_smoke.sh
 ````
 
+Expected output:
+
+```
+[run_smoke] start <Day> <DD> <Mon> <YYYY> <HH:MM:SS> <TZ>
+[smoke-rob] start <Day> <DD> <Mon> <YYYY> <HH:MM:SS> <TZ>
+[smoke-rob] running 10 points
+[smoke-rob] (1/10) index=0
+[done] wrote robustness outputs to: experiments/results/robustness/smoke/point_0
+[smoke-rob] (<i>/<N>) index=<k>
+[done] wrote robustness outputs to: experiments/results/robustness/smoke/point_<k>
+...
+[smoke-rob] (10/10) index=9
+[done] wrote robustness outputs to: experiments/results/robustness/smoke/point_9
+[smoke-expl] start <Day> <DD> <Mon> <YYYY> <HH:MM:SS> <TZ>
+[smoke-expl] running 10 points
+[smoke-expl] (1/10) index=27
+[done] wrote explainability outputs under: experiments/results/explainability/smoke/point_27
+[smoke-expl] (<i>/<N>) index=<k>
+[done] wrote explainability outputs under: experiments/results/explainability/smoke/point_<k>
+...
+[smoke-expl] (10/10) index=66
+[done] wrote explainability outputs under: experiments/results/explainability/smoke/point_66
+[smoke-expl] success
+[smoke-expl] done <Day> <DD> <Mon> <YYYY> <HH:MM:SS> <TZ>
+[run_smoke] done <Day> <DD> <Mon> <YYYY> <HH:MM:SS> <TZ>
+```
+
 Or run each use case separately:
 
 ```bash
-bash experiments/scripts/run_smoke_explainability.sh   # ~45–50 minutes
 bash experiments/scripts/run_smoke_robustness.sh       # ~15–20 minutes
+bash experiments/scripts/run_smoke_explainability.sh   # ~45-55 minutes
 ```
 
 These verify that:

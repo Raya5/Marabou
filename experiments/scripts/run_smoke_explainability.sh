@@ -8,17 +8,13 @@ set -euo pipefail
 
 SUCCESS_FILE="experiments/results/explainability/smoke/success.json"
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-REPO_DIR="$( cd "$SCRIPT_DIR/../.." && pwd )"
-cd "$REPO_DIR"
-
 rm -f "$SUCCESS_FILE"
-
-echo "[smoke-expl] start $(date)"
-echo "[smoke-expl] running $NUM_POINTS points"
 
 INDICES=(27 28 31 33 34 41 57 58 61 66)
 NUM_POINTS=${#INDICES[@]}
+
+echo "[smoke-expl] start $(date)"
+echo "[smoke-expl] running $NUM_POINTS points"
 
 counter=1
 for i in "${INDICES[@]}"
@@ -30,7 +26,6 @@ done
 
 if [[ -f "$SUCCESS_FILE" ]]; then
     echo "[smoke-expl] success"
-    cat "$SUCCESS_FILE"
 else
     echo "[smoke-expl] ERROR: missing success marker: $SUCCESS_FILE"
     exit 1

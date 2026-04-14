@@ -6,15 +6,11 @@ set -euo pipefail
 # Runs NUM_POINTS dataset points.
 # ============================================================
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-REPO_DIR="$( cd "$SCRIPT_DIR/../.." && pwd )"
-cd "$REPO_DIR"
+INDICES=(0 1 2 3 4 5 6 7 8 9)
+NUM_POINTS=${#INDICES[@]}
 
 echo "[smoke-rob] start $(date)"
 echo "[smoke-rob] running $NUM_POINTS points"
-
-INDICES=(0 1 2 3 4 5 6 7 8 9)
-NUM_POINTS=${#INDICES[@]}
 
 for ((j=0; j<NUM_POINTS; j++))
 do
