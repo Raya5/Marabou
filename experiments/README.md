@@ -116,6 +116,49 @@ Total expected runtime: **~40–42 hours**
 
 ### 3. Full Experiments (SLURM)
 
+This must be run on a cluster with SLURM support and access to a token-based (floating) license of Gurobi
+
+### 3.0. Installation
+
+Check that you are on a cluster with SLURM support:
+```bash
+sinfo | head -n 5
+```
+
+We rocommend continuing in an interactive SLURM session for installation (not a must):
+```bash
+srun --mem=400m -c4 --time=1-00 --pty $SHELL
+```
+
+Clone the Marabou repository and check out the release branch:
+```
+git clone https://github.com/Raya5/Marabou.git
+cd Marabou 
+git checkout release
+```
+
+Install Gurobi and set up the license:
+```
+cd tools
+bash install_gurobi.sh # ~1-2 minutes
+export GUROBI_HOME=$(pwd)"/gurobi1103/linux64"
+export PATH=$GUROBI_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$GUROBI_HOME/lib:$LD_LIBRARY_PATH
+cd ..
+```
+
+Set up your Gurobi license (Note that, unlike the student license acquired earlier, reproducing the full results requires a token-based (floating) Gurobi license (TYPE=TOKEN), provided via a Gurobi Token Server. This type of license is typically available in university-managed clusters and shared environments):
+```
+export GRB_LICENSE_FILE="/path/to/your/gurobi.lic"
+```
+
+Install Marabou with Gurobi:
+```
+bash install_marabou.sh # ~25-30 minutes
+```
+
+### 3.1.
+
 Run the full experiment suite using SLURM:
 
 ```bash
@@ -147,7 +190,7 @@ experiments/results/<usecase>/<smoke|full>/point_<idx>/
 
 ## Analysis
 
-To reproduce plots and aggregated statistics:
+After the experiments have completed, you can run the analysis scripts to reproduce results from the paper. To reproduce plots and aggregated statistics:
 
 ```bash
 python experiments/analysis/summarize.py

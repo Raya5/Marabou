@@ -36,6 +36,7 @@ _deps
 /tools/OpenBLAS*
 /tools/onnx*
 tools/gurobi11*
+tools/cadical*
 
 build
 /.idea/

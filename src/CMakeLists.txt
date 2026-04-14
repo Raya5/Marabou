@@ -45,14 +45,6 @@ macro(marabou_add_test test_name test_dir add_common_real add_engine_real labels
     add_dependencies(build-tests ${name})
 endmacro()
 
-# CaDiCaL static library (pre-built in tools/cadical)
-add_library(cadical STATIC IMPORTED)
-
-set_target_properties(cadical PROPERTIES
-    IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/tools/cadical/build/libcadical.a"
-    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/tools/cadical/src"
-)
-
 add_subdirectory(configuration)
 add_subdirectory(engine)
 add_subdirectory(basis_factorization)
