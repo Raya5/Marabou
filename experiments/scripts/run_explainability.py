@@ -496,6 +496,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--index", type=int, required=True, help="Point index in the dataset (run_id).")
     parser.add_argument("--smoke", action="store_true", help="Write outputs under results/.../smoke/ instead of full/")
+    parser.add_argument("--subset", action="store_true", help="Write outputs under results/.../subset/ instead of full/")
 
     args = parser.parse_args()
 
@@ -503,16 +504,18 @@ def main():
     dataset = "gtsrb"
     model_name = "gtsrb-cnn"
     epsilon = 0.05
-    idx = int(args.index)
+    index = int(args.index)
+    indices = [22, 49, 57, 58, 61, 62, 79, 83, 97, 109, 122, 125, 142, 144, 154, 155, 178, 184, 197, 214, 215, 256, 268, 275, 291, 311, 323, 339, 404, 461, 462, 464, 465, 491, 493, 564, 604, 635, 637, 669, 673, 682, 702, 705, 708, 717, 737, 756, 765, 767, 769, 770, 771, 775, 780, 809, 811, 820, 837, 842, 844, 845, 858, 877, 885, 940, 961, 966, 969, 989]
+    idx = indices[index]
 
     # Paths 
     gtsrb_pickle = "experiments/data/gtsrb.pickle"
     model_path_no_suffix = f"experiments/data/{model_name}"
 
     # Output root
-    smoke_or_full = "smoke" if args.smoke else "full"
+    smoke_or_full_or_subset = "smoke" if args.smoke else "full" if not args.subset else "subset"
     run_id = str(idx)  # you locked: run_id = point index
-    root = Path("experiments") / "results" / "explainability" / smoke_or_full / f"point_{run_id}"
+    root = Path("experiments") / "results" / "explainability" / smoke_or_full_or_subset / f"point_{run_id}"
     root.mkdir(parents=True, exist_ok=True)
 
 
@@ -536,7 +539,7 @@ def main():
         )
         verix.new_traversal(epsilon=epsilon * 0.1)
         verix.compute_explanation(epsilon=epsilon)
-        if inc and smoke_or_full == "smoke":
+        if inc and smoke_or_full_or_subset == "smoke":
             smoke_dir = Path("experiments") / "results" / "explainability" / smoke_or_full 
             smoke_dir.mkdir(parents=True, exist_ok=True)
             with open(smoke_dir / "success.json", "w") as f:

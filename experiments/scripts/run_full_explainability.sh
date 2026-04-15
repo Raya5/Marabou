@@ -6,7 +6,7 @@ set -euo pipefail
 # Runs a fixed subset of dataset points sequentially.
 # ============================================================
 
-NUM_POINTS=10
+NUM_POINTS=70
 
 echo "[subset-expl] start $(date)"
 echo "[subset-expl] running $NUM_POINTS points"

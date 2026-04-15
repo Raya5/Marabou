@@ -468,7 +468,8 @@ def run_mode(
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--index", type=int, required=True, help="MNIST test-set index in [0, 9999]")
-    p.add_argument("--smoke", action="store_true", help="Use smoke timeouts/precision")
+    p.add_argument("--smoke", action="store_true", help="Use smoke timeouts/precision and write under results/.../smoke/")
+    p.add_argument("--subset", action="store_true", help="Write under results/.../subset/")
     args = p.parse_args()
 
     cfg = RobustnessConfig()
@@ -491,7 +492,7 @@ def main():
     pred_label = ort_predict_label(cfg.onnx_path, point_flat)
     is_correct = (pred_label == true_label)
 
-    tier = "smoke" if args.smoke else "full"
+    tier = "smoke" if args.smoke else "full" if not args.subset else "subset"
     out_root =  Path("experiments") / "results" / "robustness" / tier / f"point_{db_idx}"
 
     # If misclassified: write a baseline+incremental summary with skipped status (easy downstream)

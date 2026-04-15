@@ -42,48 +42,55 @@ This release supports:
 
 ## Quick Start
 
-### 0. Installation
+### 0. Installation (~ 1.5 hours)
 
-### 1. Smoke Test
+#### 0.1. obtaining Gurobi license
 
-Run small sanity tests (< 1.5 hours):
+
+To run the experiments in this repository, you must have a **Gurobi Optimizer** license. Gurobi provides free licenses to students and faculty.
+
+1. Register for an Academic Account
+    1.  Visit the Gurobi Registration Page [https://www.gurobi.com/registration/](https://www.gurobi.com/registration/).
+    2.  Register using your institutional/university email address.
+    3.  Select **"Academic"** under "Your Work" in the second page in registration.
+    4.  Continue with the registration process according to the instructions.
+
+2. Obtain your License Key
+    1.  Log in to the Gurobi Website:[https://portal.gurobi.com/iam/login](https://portal.gurobi.com/iam/login).
+    2.  Navigate to the Licenses page by clicking Licenses on the left or use the link: [https://portal.gurobi.com/iam/licenses/list](https://portal.gurobi.com/iam/licenses/list).
+    3.  Click on the "Request" button or use the link: [https://portal.gurobi.com/iam/licenses/request](https://portal.gurobi.com/iam/licenses/request).
+    4.  Choose the "WLS Academic" license and click "Generate Now". Accept the terms and click **Confirm Request**.
+    5.  Download the license file (`gurobi.lic`) and save it in "<path_to_your_license_file>".
+
+<!-- ```bash
+# Example for Linux/macOS
+export GRB_LICENSE_FILE="/path/to/your/gurobi.lic" -->
+
+### 1. Smoke Test (~ 15 minutes)
+
+Make sure that you are in the `Marabou` directory and run small sanity tests (< 15 minutes):
 
 ```bash
 bash experiments/scripts/run_smoke.sh
 ````
 
-Expected output:
+Expected sucess output:
 
 ```
 [run_smoke] start <Day> <DD> <Mon> <YYYY> <HH:MM:SS> <TZ>
 [smoke-rob] start <Day> <DD> <Mon> <YYYY> <HH:MM:SS> <TZ>
-[smoke-rob] running 10 points
-[smoke-rob] (1/10) index=0
+[smoke-rob] index=0
 [done] wrote robustness outputs to: experiments/results/robustness/smoke/point_0
-[smoke-rob] (<i>/<N>) index=<k>
-[done] wrote robustness outputs to: experiments/results/robustness/smoke/point_<k>
-...
-[smoke-rob] (10/10) index=9
-[done] wrote robustness outputs to: experiments/results/robustness/smoke/point_9
+[smoke-rob] index=1
+[done] wrote robustness outputs to: experiments/results/robustness/smoke/point_1
+[smoke-rob] success
+[smoke-rob] done <Day> <DD> <Mon> <YYYY> <HH:MM:SS> <TZ>
 [smoke-expl] start <Day> <DD> <Mon> <YYYY> <HH:MM:SS> <TZ>
-[smoke-expl] running 10 points
-[smoke-expl] (1/10) index=27
+[smoke-expl] index=27
 [done] wrote explainability outputs under: experiments/results/explainability/smoke/point_27
-[smoke-expl] (<i>/<N>) index=<k>
-[done] wrote explainability outputs under: experiments/results/explainability/smoke/point_<k>
-...
-[smoke-expl] (10/10) index=66
-[done] wrote explainability outputs under: experiments/results/explainability/smoke/point_66
 [smoke-expl] success
 [smoke-expl] done <Day> <DD> <Mon> <YYYY> <HH:MM:SS> <TZ>
 [run_smoke] done <Day> <DD> <Mon> <YYYY> <HH:MM:SS> <TZ>
-```
-
-Or run each use case separately:
-
-```bash
-bash experiments/scripts/run_smoke_robustness.sh       # ~15–20 minutes
-bash experiments/scripts/run_smoke_explainability.sh   # ~45-55 minutes
 ```
 
 These verify that:
@@ -94,29 +101,35 @@ These verify that:
 
 ---
 
-### 2. Subset Sequential Run
+### 2. Subset Sequential Run (~ 8 hours)
 
-Due to the long runtime of the full experiments, we provide a sequential run on a small subset of points that is enough to verify the approach and results.
-For the full experiment suite, see section [3. Full Experiments (SLURM)](#3-full-experiments-slurm).
+Due to the long runtime of the full experiments, we provide a sequential run on a small subset of points that as advised in the artifact evaluation instructions finishes within 8 hours.
+For the full experiment suite, see section [3. Full Experiments](#3-full-experiments).
 
-Run a subset of points sequentially:
+Run a subset of points:
 
 ```bash
-bash experiments/scripts/run_subset.sh
+bash experiments/scripts/run.sh 
 ```
+This will take about 8 hours and runs a subset of points sequentially.
 
-This runs:
-
-* `run_subset_explainability.sh` (~12 hours)
-* `run_subset_robustness.sh` (~30 hours)
-
-Total expected runtime: **~40–42 hours**
 
 ---
 
-### 3. Full Experiments (SLURM)
+### 3. Full Experiments 
 
-This must be run on a cluster with SLURM support and access to a token-based (floating) license of Gurobi
+The subset run above is sufficient to verify that the code is working correctly and generates the expected outputs as in the paper.
+This step is optional and it reproduces the full results from the paper. 
+
+To run the full experiment suite:
+
+```bash
+bash experiments/scripts/run.sh --full
+```
+This will take at least 3 days machine time and might take longer.
+
+### temp
+
 
 ### 3.0. Installation
 
