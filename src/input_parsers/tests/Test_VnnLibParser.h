@@ -74,17 +74,17 @@ public:
         auto *disjunction =
             (DisjunctionConstraint *)( _query->getPiecewiseLinearConstraints().back() );
         const auto &caseSplits = disjunction->getCaseSplits();
-        const auto &caseSplitsIter = caseSplits.begin();
+        auto caseSplitsIter = caseSplits.begin();
         auto boundsIter = ( *caseSplitsIter ).getBoundTightenings().begin();
 
         Tightening t = *boundsIter;
         TS_ASSERT( t == Tightening( inputVar, -1, Tightening::LB ) )
 
-        boundsIter++;
+        ++boundsIter;
         t = *boundsIter;
         TS_ASSERT( t == Tightening( inputVar, 1, Tightening::UB ) )
 
-        boundsIter++;
+        ++boundsIter;
         t = *boundsIter;
         TS_ASSERT( t == Tightening( outputVar, 100, Tightening::LB ) )
     }
@@ -99,17 +99,17 @@ public:
         auto *disjunction =
             (DisjunctionConstraint *)( _query->getPiecewiseLinearConstraints().back() );
         const auto &caseSplits = disjunction->getCaseSplits();
-        const auto &caseSplitsIter = caseSplits.begin();
+        auto caseSplitsIter = caseSplits.begin();
         auto boundsIter = ( *caseSplitsIter ).getBoundTightenings().begin();
 
         Tightening t = *boundsIter;
         TS_ASSERT( t == Tightening( inputVar, -1, Tightening::LB ) )
 
-        boundsIter++;
+        ++boundsIter;
         t = *boundsIter;
         TS_ASSERT( t == Tightening( inputVar, 1, Tightening::UB ) )
 
-        boundsIter++;
+        ++boundsIter;
         t = *boundsIter;
         TS_ASSERT( t == Tightening( outputVar, 100, Tightening::LB ) )
     }
@@ -150,40 +150,37 @@ public:
 
         auto eqIter = _query->getEquations().rbegin();
 
-        Equation &eq = *eqIter;
         testEq.addAddend( 1, _query->outputVariableByIndex( 0 ) );
         testEq.addAddend( -1, _query->outputVariableByIndex( 4 ) );
         testEq.setScalar( 0 );
-        TS_ASSERT( eq.equivalent( testEq ) )
+        TS_ASSERT( eqIter->equivalent( testEq ) )
 
-        eqIter++;
-        eq = *eqIter;
+        ++eqIter;
         testEq = Equation( Equation::EquationType::LE );
         testEq.addAddend( 1, _query->outputVariableByIndex( 0 ) );
         testEq.addAddend( -1, _query->outputVariableByIndex( 3 ) );
         testEq.setScalar( 0 );
-        TS_ASSERT( eq.equivalent( testEq ) )
+        TS_ASSERT( eqIter->equivalent( testEq ) )
 
-        eqIter++;
-        eq = *eqIter;
+        ++eqIter;
         testEq = Equation( Equation::EquationType::LE );
         testEq.addAddend( 1, _query->outputVariableByIndex( 0 ) );
         testEq.addAddend( -1, _query->outputVariableByIndex( 2 ) );
         testEq.setScalar( 0 );
-        TS_ASSERT( eq.equivalent( testEq ) )
+        TS_ASSERT( eqIter->equivalent( testEq ) )
 
-        eqIter++;
-        eq = *eqIter;
+        ++eqIter;
         testEq = Equation( Equation::EquationType::LE );
         testEq.addAddend( 1, _query->outputVariableByIndex( 0 ) );
         testEq.addAddend( -1, _query->outputVariableByIndex( 1 ) );
         testEq.setScalar( 0 );
-        TS_ASSERT( eq.equivalent( testEq ) )
+        TS_ASSERT( eqIter->equivalent( testEq ) )
 
         Engine engine;
         engine.setVerbosity( 0 );
         TS_ASSERT_THROWS_NOTHING( engine.processInputQuery( *_query ) );
         TS_ASSERT_THROWS_NOTHING( engine.solve() );
+        std::cout << "Exit code: " << engine.getExitCode() << std::endl;
         TS_ASSERT( engine.getExitCode() == Engine::ExitCode::SAT )
     }
 
@@ -223,35 +220,31 @@ public:
 
         auto eqIter = _query->getEquations().rbegin();
 
-        Equation &eq = *eqIter;
         testEq.addAddend( 1, _query->outputVariableByIndex( 0 ) );
         testEq.addAddend( -1, _query->outputVariableByIndex( 4 ) );
         testEq.setScalar( 0 );
-        TS_ASSERT( eq.equivalent( testEq ) )
+        TS_ASSERT( eqIter->equivalent( testEq ) )
 
-        eqIter++;
-        eq = *eqIter;
+        ++eqIter;
         testEq = Equation( Equation::EquationType::LE );
         testEq.addAddend( 1, _query->outputVariableByIndex( 0 ) );
         testEq.addAddend( -1, _query->outputVariableByIndex( 3 ) );
         testEq.setScalar( 0 );
-        TS_ASSERT( eq.equivalent( testEq ) )
+        TS_ASSERT( eqIter->equivalent( testEq ) )
 
-        eqIter++;
-        eq = *eqIter;
+        ++eqIter;
         testEq = Equation( Equation::EquationType::LE );
         testEq.addAddend( 1, _query->outputVariableByIndex( 0 ) );
         testEq.addAddend( -1, _query->outputVariableByIndex( 2 ) );
         testEq.setScalar( 0 );
-        TS_ASSERT( eq.equivalent( testEq ) )
+        TS_ASSERT( eqIter->equivalent( testEq ) )
 
-        eqIter++;
-        eq = *eqIter;
+        ++eqIter;
         testEq = Equation( Equation::EquationType::LE );
         testEq.addAddend( 1, _query->outputVariableByIndex( 0 ) );
         testEq.addAddend( -1, _query->outputVariableByIndex( 1 ) );
         testEq.setScalar( 0 );
-        TS_ASSERT( eq.equivalent( testEq ) )
+        TS_ASSERT( eqIter->equivalent( testEq ) )
 
         Engine engine;
         engine.setVerbosity( 0 );
@@ -319,11 +312,10 @@ public:
 
         auto eqIter = _query->getEquations().rbegin();
 
-        Equation &eq = *eqIter;
         testEq.addAddend( 1, output0 );
         testEq.addAddend( 1, output1 );
         testEq.setScalar( 1 );
-        TS_ASSERT( eq.equivalent( testEq ) )
+        TS_ASSERT( eqIter->equivalent( testEq ) )
     }
 
     void test_sub_const()
@@ -385,11 +377,10 @@ public:
 
         auto eqIter = _query->getEquations().rbegin();
 
-        Equation &eq = *eqIter;
-        testEq.addAddend( 1, _query->outputVariableByIndex( 0 ) );
-        testEq.addAddend( -1, _query->outputVariableByIndex( 1 ) );
+        testEq.addAddend( 1, output0 );
+        testEq.addAddend( -1, output1 );
         testEq.setScalar( 1 );
-        TS_ASSERT( eq.equivalent( testEq ) )
+        TS_ASSERT( eqIter->equivalent( testEq ) )
     }
 
     void test_mul_var_const()

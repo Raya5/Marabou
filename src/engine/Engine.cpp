@@ -4100,7 +4100,7 @@ Engine::analyseExplanationDependencies( const SparseUnsortedList &explanation,
             entry->lemma->setToCheck();
 
             _statistics.incUnsignedAttribute( Statistics::NUM_LEMMAS_USED );
-            std::_List_const_iterator<unsigned int> it = entry->lemma->getCausingVars().begin();
+            auto it = entry->lemma->getCausingVars().begin();
             for ( const auto &expl : entry->lemma->getExplanations() )
             {
                 analyseExplanationDependencies( expl,
@@ -4136,7 +4136,7 @@ void Engine::recordConflictFromCurrentDecisions()
 {
     ASSERT( _incrementalMode );
 
-    const unsigned depth = _searchTreeHandler.getStackDepth();
+    // const unsigned depth = _searchTreeHandler.getStackDepth();
     // printf( "[Engine][IV] recordConflictFromCurrentDecisions at depth %u\n", depth );
 
     ASSERT( _incrementalConflictAnalyser );
@@ -4230,8 +4230,8 @@ void Engine::applyIncrementalConflictAnalyserTightenings()
         const unsigned tableauVar = _tableau->getVariableAfterMerging( engineVar );
         ASSERT( tableauVar == engineVar ); 
 
-        const double currentLb = _boundManager.getLowerBound( engineVar );
-        const double currentUb = _boundManager.getUpperBound( engineVar );
+        // const double currentLb = _boundManager.getLowerBound( engineVar );
+        // const double currentUb = _boundManager.getUpperBound( engineVar );
 
         if ( tightening._type == Tightening::LB )
         {

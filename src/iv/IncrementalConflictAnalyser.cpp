@@ -57,8 +57,7 @@ void IncrementalConflictAnalyser::syncWithEngineBoundManager( BoundManager *boun
         const double lb = boundManager->getLowerBound( newVar );
         const double ub = boundManager->getUpperBound( newVar );
 
-        const ReLURuntimeState rt = _getReluPhase( oldVar );
-        ASSERT( rt == ReLURuntimeState::Unstable );
+        ASSERT( _getReluPhase( oldVar ) == ReLURuntimeState::Unstable );
 
 
         // If interval entirely >= 0 => Active
@@ -267,7 +266,7 @@ bool IncrementalConflictAnalyser::getImpliedTighteningsFromSat( List<Tightening>
                 ReLUState impliedPhase;
 
                 const bool success = _litToPhase( lit, oldVar, impliedPhase );
-                ASSERT( success );
+                ASSERT( success ); (void)success;
 
                 const ReLURuntimeState currentRt = _getReluPhase( oldVar );
 
