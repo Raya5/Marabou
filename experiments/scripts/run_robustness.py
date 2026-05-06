@@ -4,13 +4,16 @@ experiments/scripts/run_robustness.py
 
 Run robustness-radius (epsilon) search for one MNIST test point,
 in two modes:
-  - baseline (non-incremental)
-  - incremental (conflict reuse)
+ - baseline (non-incremental)
+ - incremental (conflict reuse)
+
+Incremental mode uses query IDs:
+ - every epsilon query gets a fresh ID
+ - a query inherits all previous query IDs with strictly larger epsilon
 
 Outputs (per point, per mode):
-experiments/results/robustness/<smoke|full>/point_<db_idx>/<baseline|incremental>/summary.json
+experiments/results/robustness/<smoke|full|subset>/point_<db_idx>/<baseline|incremental>/summary.json
 
-Fixed configuration is hardcoded below (per your release plan).
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import onnxruntime as ort
 
+
 # ---------------------------------------------------------------------
 # sys.path: make maraboupy importable from iv/Marabou, regardless of cwd
 # File location: iv/Marabou/experiments/scripts/run_robustness.py
@@ -37,8 +41,9 @@ sys.path.insert(0, str(_MARABOU_ROOT))
 from maraboupy import Marabou, MarabouCore, MarabouUtils  # noqa: E402
 from maraboupy.MarabouCore import StatisticsUnsignedAttribute  # noqa: E402
 
+
 # ---------------------------------------------------------------------
-# Fixed config (release)
+# Fixed config
 # ---------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -60,7 +65,7 @@ class RobustnessConfig:
 
 
 # ---------------------------------------------------------------------
-# MNIST loading 
+# MNIST loading
 # ---------------------------------------------------------------------
 
 def load_mnist_test_openml() -> Tuple[np.ndarray, np.ndarray]:
@@ -69,7 +74,7 @@ def load_mnist_test_openml() -> Tuple[np.ndarray, np.ndarray]:
       x_test: uint8 (10000, 28, 28)
       y_test: uint8 (10000,)
     """
-    from sklearn.datasets import fetch_openml  # local import on purpose
+    from sklearn.datasets import fetch_openml
 
     mnist = fetch_openml("mnist_784", version=1, as_frame=False)
     X = mnist.data.astype(np.uint8).reshape(-1, 28, 28)
@@ -79,20 +84,24 @@ def load_mnist_test_openml() -> Tuple[np.ndarray, np.ndarray]:
     y_test = y[60000:]
     return x_test, y_test
 
+
 def get_point_by_db_index(db_idx: int) -> Tuple[np.ndarray, int]:
     """
-    db_idx is the MNIST *test-set* index in [0, 9999].
+    db_idx is the MNIST test-set index in [0, 9999].
+
     Returns:
       point_flat: float32 shape (784,)
       true_label: int
     """
     x_test_u8, y_test_u8 = load_mnist_test_openml()
-    if not (0 <= db_idx < x_test_u8.shape[0]):
-        raise ValueError(f"db_idx must be in [0, {x_test_u8.shape[0]-1}]")
 
-    img = x_test_u8[db_idx].astype(np.float32) / 255.0  # (28,28)
-    point_flat = img.reshape(-1).astype(np.float32)     # (784,)
+    if not (0 <= db_idx < x_test_u8.shape[0]):
+        raise ValueError(f"db_idx must be in [0, {x_test_u8.shape[0] - 1}]")
+
+    img = x_test_u8[db_idx].astype(np.float32) / 255.0
+    point_flat = img.reshape(-1).astype(np.float32)
     true_label = int(y_test_u8[db_idx])
+
     return point_flat, true_label
 
 
@@ -104,39 +113,64 @@ def ort_predict_label(onnx_path: str, point_flat: np.ndarray) -> int:
     so = ort.SessionOptions()
     so.intra_op_num_threads = 1
     so.inter_op_num_threads = 1
-    sess = ort.InferenceSession(onnx_path, sess_options=so, providers=["CPUExecutionProvider"])
+
+    sess = ort.InferenceSession(
+        onnx_path,
+        sess_options=so,
+        providers=["CPUExecutionProvider"],
+    )
+
     input_name = sess.get_inputs()[0].name
-    # Old code used (1, 784, 1)
+
     x = point_flat.reshape(1, -1, 1).astype(np.float32)
     logits = sess.run(None, {input_name: x})[0].reshape(-1)
+
     return int(np.argmax(logits))
 
 
 # ---------------------------------------------------------------------
-# Marabou robustness query building (disjunction: misclassification)
+# Marabou robustness query building
 # ---------------------------------------------------------------------
 
-def add_output_constraints_for_misclassification(network, target_label: int, margin: float = 0.0):
+def add_output_constraints_for_misclassification(
+    network,
+    target_label: int,
+    margin: float = 0.0,
+):
+    """
+    Adds the disjunction:
+
+        OR_{k != target_label} y_k >= y_target + margin
+
+    encoded as:
+
+        y_target - y_k <= -margin
+    """
     if margin < 0.0:
         raise ValueError("margin must be non-negative")
 
-    # Flatten output vars
     flat_outputs = [int(v) for arr in network.outputVars for v in arr.flatten()]
     if not flat_outputs:
         raise RuntimeError("No output variables found")
 
     if not (0 <= int(target_label) < len(flat_outputs)):
-        raise ValueError(f"target_label {target_label} out of range (num outputs={len(flat_outputs)})")
+        raise ValueError(
+            f"target_label {target_label} out of range "
+            f"(num outputs={len(flat_outputs)})"
+        )
 
     y_t = flat_outputs[int(target_label)]
+
     disjuncts = []
     for k, y_k in enumerate(flat_outputs):
         if k == int(target_label):
             continue
+
         eq = MarabouUtils.Equation(MarabouCore.Equation.LE)
         eq.addAddend(1.0, y_t)
-        eq.addAddend(-1.0, y_k)
+        eq.addAddend(-1.0, int(y_k))
         eq.setScalar(float(-margin))  # y_t - y_k <= -margin
+
         disjuncts.append([eq])
 
     network.addDisjunctionConstraint(disjuncts)
@@ -146,27 +180,40 @@ def build_options(timeout_per_query_sec: float, incremental: bool):
     options = Marabou.createOptions(timeoutInSeconds=int(timeout_per_query_sec))
     options._verbosity = 0
     options._incremental = bool(incremental)
-    # Ensure DnC / SNC is off (important for incremental)
+
+    # Ensure DnC / SNC is off. This is important for incremental mode.
     if hasattr(options, "_snc"):
         options._snc = False
+
     return options
 
 
-def compute_input_box_bounds(point_flat: np.ndarray, *, epsilon: float, input_min: float, input_max: float):
+def compute_input_box_bounds(
+    point_flat: np.ndarray,
+    *,
+    epsilon: float,
+    input_min: float,
+    input_max: float,
+) -> Tuple[np.ndarray, np.ndarray]:
     p = np.asarray(point_flat, dtype=np.float32).reshape(-1)
+
     lb = np.maximum(p - float(epsilon), float(input_min))
     ub = np.minimum(p + float(epsilon), float(input_max))
+
     if np.any(lb > ub + 1e-12):
         bad = int(np.argmax(lb > ub + 1e-12))
         raise ValueError(f"Invalid box at dim {bad}: lb={lb[bad]} > ub={ub[bad]}")
+
     return lb, ub
 
 
 def apply_input_bounds_to_ipq(ipq, lb: np.ndarray, ub: np.ndarray):
     n = ipq.getNumInputVariables()
     flat_input_vars = [ipq.inputVariableByIndex(i) for i in range(n)]
+
     if lb.shape != (n,) or ub.shape != (n,):
         raise ValueError(f"lb/ub must be shape ({n},), got {lb.shape} / {ub.shape}")
+
     for i, var in enumerate(flat_input_vars):
         ipq.setLowerBound(int(var), float(lb[i]))
         ipq.setUpperBound(int(var), float(ub[i]))
@@ -179,10 +226,51 @@ def _get_unsigned_stat(stats, attr) -> Optional[int]:
     """
     if stats is None:
         return None
+
     try:
         return int(stats.getUnsignedAttribute(attr))
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------
+# Incremental query ID manager
+# ---------------------------------------------------------------------
+
+class IncrementalIDManager:
+    """
+    Assigns a fresh ID to each incremental query.
+
+    For a query at epsilon eps, ancestors are all previous query IDs whose
+    epsilon is strictly larger than eps.
+
+    This matches the refinement direction:
+
+        smaller epsilon box refines larger epsilon box
+
+    so conflicts learned at larger epsilon can be inherited by smaller epsilon
+    queries.
+    """
+
+    def __init__(self):
+        self._next_id = 1
+        self._seen_queries: List[Tuple[float, int]] = []
+
+    def new_query(self, epsilon: float) -> Tuple[int, List[int]]:
+        eps = float(epsilon)
+
+        query_id = self._next_id
+        self._next_id += 1
+
+        ancestors = [
+            int(prev_id)
+            for prev_eps, prev_id in self._seen_queries
+            if float(prev_eps) > eps
+        ]
+
+        self._seen_queries.append((eps, int(query_id)))
+
+        return int(query_id), ancestors
 
 
 # ---------------------------------------------------------------------
@@ -197,23 +285,40 @@ def solve_at_epsilon(
     marabou_options,
     incremental: bool,
     ica=None,
+    query_id: Optional[int] = None,
+    ancestors: Optional[List[int]] = None,
+    input_min: float = 0.0,
+    input_max: float = 1.0,
 ) -> Dict[str, Any]:
     """
-    Returns a history entry:
-      result: SAT/UNSAT/TIMEOUT
-      runtime_ours
-      num_incremental_tightenings (0 if baseline)
-      conflicts_recorded (only meaningful for incremental)
-      min_sat_epsilon (for SAT; else None)
-    """
-    lb, ub = compute_input_box_bounds(point_flat, epsilon=epsilon, input_min=0.0, input_max=1.0)
+    Solves one robustness query at the given epsilon.
 
-    # incremental epsilon hook if available
-    if incremental and ica is not None:
-        try:
-            ica.setNewEpsilon(float(epsilon))
-        except Exception:
-            pass
+    In incremental mode:
+      - query_id must be provided
+      - ancestors must contain the IDs of previous queries with larger epsilon
+      - the ICA receives setID(query_id) and setAncestors(ancestors)
+
+    Returns a history entry.
+    """
+    lb, ub = compute_input_box_bounds(
+        point_flat,
+        epsilon=epsilon,
+        input_min=input_min,
+        input_max=input_max,
+    )
+
+    if incremental:
+        if ica is None:
+            raise RuntimeError("incremental=True but ica is None")
+        if query_id is None:
+            raise RuntimeError("incremental=True but query_id is None")
+        if ancestors is None:
+            raise RuntimeError("incremental=True but ancestors is None")
+
+        ica.setID(int(query_id))
+        ica.setAncestors([int(a) for a in ancestors])
+
+        ica.setRecordConflicts(True)
 
     ipq.push()
     apply_input_bounds_to_ipq(ipq, lb, ub)
@@ -231,15 +336,17 @@ def solve_at_epsilon(
     elif exit_code == "TIMEOUT":
         result = "TIMEOUT"
     else:
-        # treat unexpected as TIMEOUT to keep the search stable
+        # Keep the search stable.
         result = "TIMEOUT"
 
     num_tight = 0
     if incremental:
-        v = _get_unsigned_stat(stats, StatisticsUnsignedAttribute.NUM_INCREMENTAL_TIGHTENINGS)
+        v = _get_unsigned_stat(
+            stats,
+            StatisticsUnsignedAttribute.NUM_INCREMENTAL_TIGHTENINGS,
+        )
         num_tight = int(v or 0)
 
-    # --- conflicts counters ---
     conflicts_recorded = 0
     if incremental and ica is not None:
         try:
@@ -247,7 +354,6 @@ def solve_at_epsilon(
         except Exception:
             conflicts_recorded = 0
 
-    # SAT min epsilon extraction
     min_sat_epsilon = None
     if result == "SAT":
         try:
@@ -268,11 +374,13 @@ def solve_at_epsilon(
         "exit_code": str(exit_code),
         "conflicts_recorded": int(conflicts_recorded),
         "min_sat_epsilon": min_sat_epsilon,
+        "query_id": int(query_id) if query_id is not None else None,
+        "ancestors": [int(a) for a in ancestors] if ancestors is not None else [],
     }
 
 
 # ---------------------------------------------------------------------
-# Binary robustness search (bracketed)
+# Binary robustness search
 # ---------------------------------------------------------------------
 
 def find_robustness_binary(
@@ -286,8 +394,9 @@ def find_robustness_binary(
     """
     Returns:
       history
-      min_unsat (largest UNSAT observed)
-      max_sat  (smallest SAT observed)
+      min_unsat: largest UNSAT epsilon observed
+      max_sat: smallest SAT epsilon observed
+
     TIMEOUT does not move the bracket.
     """
     t_start = time.perf_counter()
@@ -296,40 +405,15 @@ def find_robustness_binary(
         return float(all_timeout_sec) - (time.perf_counter() - t_start)
 
     history: List[Dict[str, Any]] = []
-    min_unsat = None
-    max_sat = None
-
-    # Endpoint probes
-    if time_left() <= 0:
-        return history, min_unsat, max_sat
-
-    e_max = solve_with_epsilon(eps_max)
-    history.append(e_max)
-    if e_max["result"] == "SAT":
-        max_sat = float(e_max.get("min_sat_epsilon") or eps_max)
-    elif e_max["result"] == "UNSAT":
-        # cannot bracket SAT side
-        return history, float(eps_max), float(eps_max)
-
-    if time_left() <= 0:
-        return history, min_unsat, max_sat
-
-    e_min = solve_with_epsilon(eps_min)
-    history.append(e_min)
-    if e_min["result"] == "UNSAT":
-        min_unsat = float(eps_min)
-    elif e_min["result"] == "SAT":
-        # non-robust already at eps_min
-        return history, float(eps_min), float(eps_min)
+    min_unsat = float(eps_min)
+    max_sat = float(eps_max)
 
     # Main loop
     P = 0.5
-    direction_down_from_max = True  # True: probe from max downward; False: probe from min upward
+    direction_down_from_max = True
 
-    # If one side is unknown due to TIMEOUT, we still proceed, but precision check needs both.
     while time_left() > 0:
         if min_unsat is None or max_sat is None:
-            # we don't have a bracket yet; probe mid of [eps_min, eps_max] but conservative
             lo = eps_min if min_unsat is None else min_unsat
             hi = eps_max if max_sat is None else max_sat
         else:
@@ -339,9 +423,8 @@ def find_robustness_binary(
 
         width = hi - lo
         step = width * P
-        eps = (hi - step) if direction_down_from_max else (lo + step)
 
-        # clamp
+        eps = (hi - step) if direction_down_from_max else (lo + step)
         eps = max(lo, min(hi, eps))
 
         entry = solve_with_epsilon(eps)
@@ -351,14 +434,17 @@ def find_robustness_binary(
             max_sat = float(entry.get("min_sat_epsilon") or eps)
             P = 0.5
             direction_down_from_max = True
+
         elif entry["result"] == "UNSAT":
             min_unsat = float(eps)
             P = 0.5
             direction_down_from_max = True
+
         else:
-            # TIMEOUT backoff
+            # TIMEOUT backoff.
             P *= 0.5
             direction_down_from_max = not direction_down_from_max
+
             if P < 2 ** -30:
                 break
 
@@ -382,9 +468,12 @@ def summarize_history(history: List[Dict[str, Any]], *, incremental: bool) -> Di
     num_sat = sum(1 for e in history if e.get("result") == "SAT")
     num_unsat = sum(1 for e in history if e.get("result") == "UNSAT")
     num_timeout = sum(1 for e in history if e.get("result") == "TIMEOUT")
-    total_tight = sum(int(e.get("num_incremental_tightenings", 0) or 0) for e in history)
 
-    # recorded conflicts: take last entry's conflicts_recorded (monotone counter)
+    total_tight = sum(
+        int(e.get("num_incremental_tightenings", 0) or 0)
+        for e in history
+    )
+
     total_conflicts_recorded = 0
     if incremental:
         for e in reversed(history):
@@ -399,7 +488,9 @@ def summarize_history(history: List[Dict[str, Any]], *, incremental: bool) -> Di
         "total_incremental_tightenings": int(total_tight),
         "total_conflicts_recorded": int(total_conflicts_recorded),
         "total_solver_calls": int(len(history)),
-        "total_runtime_ours": float(sum(float(e.get("runtime_ours", 0.0) or 0.0) for e in history)),
+        "total_runtime_ours": float(
+            sum(float(e.get("runtime_ours", 0.0) or 0.0) for e in history)
+        ),
     }
 
 
@@ -413,27 +504,46 @@ def run_mode(
     options = build_options(cfg.timeout_per_query_sec, incremental=incremental)
 
     network = Marabou.read_onnx(cfg.onnx_path)
-    add_output_constraints_for_misclassification(network, target_label=label, margin=cfg.margin)
+    add_output_constraints_for_misclassification(
+        network,
+        target_label=label,
+        margin=cfg.margin,
+    )
 
     ipq = network.getInputQuery()
     ipq.push()
 
     ica = None
+    id_manager = None
+
     if incremental:
         ica = MarabouCore.buildIncrementalConflictAnalyser()
         ipq.setIncrementalConflictAnalyser(ica)
+        id_manager = IncrementalIDManager()
 
     def solve_with_epsilon(eps: float):
+        query_id = None
+        ancestors: List[int] = []
+
+        if incremental:
+            assert id_manager is not None
+            query_id, ancestors = id_manager.new_query(float(eps))
+
         return solve_at_epsilon(
             ipq=ipq,
             point_flat=point_flat,
-            epsilon=eps,
+            epsilon=float(eps),
             marabou_options=options,
             incremental=incremental,
             ica=ica,
+            query_id=query_id,
+            ancestors=ancestors,
+            input_min=cfg.input_min,
+            input_max=cfg.input_max,
         )
 
     t0 = time.perf_counter()
+
     history, min_unsat, max_sat = find_robustness_binary(
         solve_with_epsilon=solve_with_epsilon,
         eps_min=cfg.eps_min,
@@ -441,6 +551,7 @@ def run_mode(
         precision=cfg.precision,
         all_timeout_sec=cfg.all_timeout_sec,
     )
+
     t1 = time.perf_counter()
 
     precision_width = None
@@ -450,29 +561,47 @@ def run_mode(
     status = "Solved"
     if len(history) == 0:
         status = "Error"
-    elif any(e.get("result") == "TIMEOUT" for e in history) and (precision_width is None or precision_width > cfg.precision):
-        # conservative: if we didn't reach the precision guarantee, call it timed out
+    elif any(e.get("result") == "TIMEOUT" for e in history) and (
+        precision_width is None or precision_width > cfg.precision
+    ):
         status = "Timedout"
 
     summary = summarize_history(history, incremental=incremental)
+
     return {
         "status": status,
         "time_sec": float(t1 - t0),
         "precision_width": precision_width,
         "min_unsat_epsilon": min_unsat,
         "max_sat_epsilon": max_sat,
+        "history": history,
         **summary,
     }
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--index", type=int, required=True, help="MNIST test-set index in [0, 9999]")
-    p.add_argument("--smoke", action="store_true", help="Use smoke timeouts/precision and write under results/.../smoke/")
-    p.add_argument("--subset", action="store_true", help="Write under results/.../subset/")
+    p.add_argument(
+        "--index",
+        type=int,
+        required=True,
+        help="MNIST test-set index in [0, 9999]",
+    )
+    p.add_argument(
+        "--smoke",
+        action="store_true",
+        help="Use smoke timeouts/precision and write under results/.../smoke/",
+    )
+    p.add_argument(
+        "--subset",
+        action="store_true",
+        help="Write under results/.../subset/",
+    )
+
     args = p.parse_args()
 
     cfg = RobustnessConfig()
+
     if args.smoke:
         cfg = RobustnessConfig(
             onnx_path=cfg.onnx_path,
@@ -490,53 +619,82 @@ def main():
     point_flat, true_label = get_point_by_db_index(db_idx)
 
     pred_label = ort_predict_label(cfg.onnx_path, point_flat)
-    is_correct = (pred_label == true_label)
+    is_correct = pred_label == true_label
 
     tier = "smoke" if args.smoke else "full" if not args.subset else "subset"
-    out_root =  Path("experiments") / "results" / "robustness" / tier / f"point_{db_idx}"
+    out_root = (
+        Path("experiments")
+        / "results"
+        / "robustness"
+        / tier
+        / f"point_{db_idx}"
+    )
 
-    # If misclassified: write a baseline+incremental summary with skipped status (easy downstream)
+    # If misclassified: write baseline+incremental summaries with skipped status.
     if not is_correct:
         for mode in ["baseline", "incremental"]:
             mode_dir = out_root / mode
             ensure_dir(mode_dir)
-            write_json(mode_dir / "summary.json", {
-                "point_index_in_database": db_idx,
-                "mode": mode,
-                "incremental": (mode == "incremental"),
-                "is_correctly_classified": False,
-                "true_label": int(true_label),
-                "predicted_label": int(pred_label),
-                "status": "SkippedMisclassified",
-            })
-        # print(f"[OK] point_{db_idx} skipped (misclassified). Wrote summaries under {out_root}")
+
+            write_json(
+                mode_dir / "summary.json",
+                {
+                    "point_index_in_database": int(db_idx),
+                    "mode": mode,
+                    "incremental": mode == "incremental",
+                    "is_correctly_classified": False,
+                    "true_label": int(true_label),
+                    "predicted_label": int(pred_label),
+                    "status": "SkippedMisclassified",
+                },
+            )
+
         return
 
-    # Run baseline then incremental
     baseline_dir = out_root / "baseline"
     inc_dir = out_root / "incremental"
+
     ensure_dir(baseline_dir)
     ensure_dir(inc_dir)
 
-    r_base = run_mode(cfg=cfg, point_flat=point_flat, label=true_label, incremental=False)
-    r_inc = run_mode(cfg=cfg, point_flat=point_flat, label=true_label, incremental=True)
+    # Run incremental first, then baseline, as in your original code.
+    r_inc = run_mode(
+        cfg=cfg,
+        point_flat=point_flat,
+        label=true_label,
+        incremental=True,
+    )
 
-    write_json(baseline_dir / "summary.json", {
-        "point_index_in_database": db_idx,
-        "mode": "baseline",
-        "incremental": False,
-        "is_correctly_classified": True,
-        **r_base,
-    })
-    write_json(inc_dir / "summary.json", {
-        "point_index_in_database": db_idx,
-        "mode": "incremental",
-        "incremental": True,
-        "is_correctly_classified": True,
-        **r_inc,
-    })
+    r_base = run_mode(
+        cfg=cfg,
+        point_flat=point_flat,
+        label=true_label,
+        incremental=False,
+    )
 
-    print(f"[done] wrote robustness outputs to: {out_root}")
+    write_json(
+        baseline_dir / "summary.json",
+        {
+            "point_index_in_database": int(db_idx),
+            "mode": "baseline",
+            "incremental": False,
+            "is_correctly_classified": True,
+            **r_base,
+        },
+    )
+
+    write_json(
+        inc_dir / "summary.json",
+        {
+            "point_index_in_database": int(db_idx),
+            "mode": "incremental",
+            "incremental": True,
+            "is_correctly_classified": True,
+            **r_inc,
+        },
+    )
+
+    # print(f"[done] wrote robustness outputs to: {out_root}")
 
 
 if __name__ == "__main__":

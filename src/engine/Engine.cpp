@@ -4165,6 +4165,7 @@ void Engine::recordConflictFromCurrentDecisions()
 
     List<PiecewiseLinearCaseSplit> decisions;
     _searchTreeHandler.allDecisionSplitsSoFar( decisions );
+    ASSERT( decisions.size() == _searchTreeHandler.getStackDepth() );
 
     std::vector<unsigned> oldVars;
     std::vector<bool> isActiveList;

@@ -5,7 +5,7 @@ experiments/scripts/run_explainability.py
 Combined runner + minimal VeriX implementation.
 
 Outputs (mode-local; no inc_/nor_ prefixes):
-experiments/results/explainability/<smoke|full>/<run_id>/<baseline|incremental>/
+experiments/results/explainability/<smoke|full|subset>/<run_id>/<baseline|incremental>/
   summary.json
   sat.txt
   unsat.txt
@@ -540,13 +540,13 @@ def main():
         verix.new_traversal(epsilon=epsilon * 0.1)
         verix.compute_explanation(epsilon=epsilon)
         if inc and smoke_or_full_or_subset == "smoke":
-            smoke_dir = Path("experiments") / "results" / "explainability" / smoke_or_full 
+            smoke_dir = Path("experiments") / "results" / "explainability" / smoke_or_full_or_subset
             smoke_dir.mkdir(parents=True, exist_ok=True)
             with open(smoke_dir / "success.json", "w") as f:
                 json.dump({"success": True}, f)        
 
 
-    print(f"[done] wrote explainability outputs under: {root}")
+    # print(f"[done] wrote explainability outputs under: {root}")
 
 
 if __name__ == "__main__":
