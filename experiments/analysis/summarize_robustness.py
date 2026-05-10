@@ -19,6 +19,8 @@ from pathlib import Path
 
 
 INPUT_ROOT = Path("experiments/results/robustness/full")
+if not INPUT_ROOT.exists():
+    INPUT_ROOT = Path("experiments/results/robustness/subset")
 OUTPUT_JSON = Path("experiments/results/analysis/robustness_summary.json")
 OUTPUT_STATS = Path("experiments/results/analysis/stats/robustness.txt")
 

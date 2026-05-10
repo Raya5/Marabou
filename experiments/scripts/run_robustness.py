@@ -74,15 +74,16 @@ def load_mnist_test_openml() -> Tuple[np.ndarray, np.ndarray]:
       x_test: uint8 (10000, 28, 28)
       y_test: uint8 (10000,)
     """
-    from sklearn.datasets import fetch_openml
+    path = Path("experiments") / "data" / "mnist_openml_test.npz"
 
-    mnist = fetch_openml("mnist_784", version=1, as_frame=False)
-    X = mnist.data.astype(np.uint8).reshape(-1, 28, 28)
-    y = mnist.target.astype(np.uint8)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing MNIST data file: {path}\n"
+            "Run: python experiments/scripts/download_mnist.py"
+        )
 
-    x_test = X[60000:]
-    y_test = y[60000:]
-    return x_test, y_test
+    data = np.load(path)
+    return data["x_test"], data["y_test"]
 
 
 def get_point_by_db_index(db_idx: int) -> Tuple[np.ndarray, int]:
@@ -104,28 +105,27 @@ def get_point_by_db_index(db_idx: int) -> Tuple[np.ndarray, int]:
 
     return point_flat, true_label
 
-
 # ---------------------------------------------------------------------
 # ORT helper
 # ---------------------------------------------------------------------
 
-def ort_predict_label(onnx_path: str, point_flat: np.ndarray) -> int:
-    so = ort.SessionOptions()
-    so.intra_op_num_threads = 1
-    so.inter_op_num_threads = 1
+# def ort_predict_label(onnx_path: str, point_flat: np.ndarray) -> int:
+#     so = ort.SessionOptions()
+#     so.intra_op_num_threads = 1
+#     so.inter_op_num_threads = 1
 
-    sess = ort.InferenceSession(
-        onnx_path,
-        sess_options=so,
-        providers=["CPUExecutionProvider"],
-    )
+#     sess = ort.InferenceSession(
+#         onnx_path,
+#         sess_options=so,
+#         providers=["CPUExecutionProvider"],
+#     )
 
-    input_name = sess.get_inputs()[0].name
+#     input_name = sess.get_inputs()[0].name
 
-    x = point_flat.reshape(1, -1, 1).astype(np.float32)
-    logits = sess.run(None, {input_name: x})[0].reshape(-1)
+#     x = point_flat.reshape(1, -1, 1).astype(np.float32)
+#     logits = sess.run(None, {input_name: x})[0].reshape(-1)
 
-    return int(np.argmax(logits))
+#     return int(np.argmax(logits))
 
 
 # ---------------------------------------------------------------------
@@ -620,9 +620,6 @@ def main():
     db_idx = indices[index]
     point_flat, true_label = get_point_by_db_index(db_idx)
 
-    pred_label = ort_predict_label(cfg.onnx_path, point_flat)
-    is_correct = pred_label == true_label
-
     tier = "smoke" if args.smoke else "full" if not args.subset else "subset"
     out_root = (
         Path("experiments")
@@ -631,27 +628,6 @@ def main():
         / tier
         / f"point_{db_idx}"
     )
-
-    # If misclassified: write baseline+incremental summaries with skipped status.
-    if not is_correct:
-        for mode in ["baseline", "incremental"]:
-            mode_dir = out_root / mode
-            ensure_dir(mode_dir)
-
-            write_json(
-                mode_dir / "summary.json",
-                {
-                    "point_index_in_database": int(db_idx),
-                    "mode": mode,
-                    "incremental": mode == "incremental",
-                    "is_correctly_classified": False,
-                    "true_label": int(true_label),
-                    "predicted_label": int(pred_label),
-                    "status": "SkippedMisclassified",
-                },
-            )
-
-        return
 
     baseline_dir = out_root / "baseline"
     inc_dir = out_root / "incremental"

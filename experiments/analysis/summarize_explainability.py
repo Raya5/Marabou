@@ -26,9 +26,12 @@ Outputs:
 import csv
 import json
 from pathlib import Path
+import os
 
 
 RESULTS_ROOT = Path("experiments/results/explainability/full")
+if not RESULTS_ROOT.exists():
+    RESULTS_ROOT = Path("experiments/results/explainability/subset")
 OUT_JSON = Path("experiments/results/analysis/explainability_summary.json")
 OUT_STATS = Path("experiments/results/analysis/stats/explainability.txt")
 
@@ -191,6 +194,7 @@ def main():
         "points": records,
     }
 
+    os.makedirs(OUT_JSON.parent, exist_ok=True)
     with open(OUT_JSON, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2)
 

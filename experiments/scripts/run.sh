@@ -28,9 +28,11 @@ echo "[run_$MODE] start $(date)"
 
 if [[ "$MODE" == "subset" ]]; then
     bash "experiments/scripts/run_subset_robustness.sh"
+    bash "experiments/scripts/run_subset_inputsplit.sh"
     bash "experiments/scripts/run_subset_explainability.sh"
 else
     bash "experiments/scripts/run_full_robustness.sh"
+    bash "experiments/scripts/run_full_inputsplit.sh"
     bash "experiments/scripts/run_full_explainability.sh"
 fi
 

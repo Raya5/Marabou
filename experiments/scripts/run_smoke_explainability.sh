@@ -10,7 +10,7 @@ SUCCESS_FILE="experiments/results/explainability/smoke/success.json"
 
 rm -f "$SUCCESS_FILE"
 
-INDICES=(27 28)
+INDICES=(0 1)
 NUM_POINTS=${#INDICES[@]}
 
 echo "[smoke-expl] start $(date)"

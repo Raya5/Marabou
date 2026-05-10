@@ -16,13 +16,17 @@ Each use-case plotting script is responsible for producing its own plots.
 
 from plots_explainability import main as plots_explainability_main
 from plots_robustness import main as plots_robustness_main
-# from plots_input_splitting import main as plots_input_splitting_main  # TODO: implement input splitting plots
+from plots_inputsplit import main as plots_input_splitting_main  
+from summarize_explainability import main as summarize_explainability_main
+from summarize_robustness import main as summarize_robustness_main
 
 
 def main():
+    summarize_explainability_main()
+    summarize_robustness_main()
     plots_explainability_main()
     plots_robustness_main()
-    # plots_input_splitting_main()  # TODO: enable once implemented
+    plots_input_splitting_main()  
 
 
 if __name__ == "__main__":
