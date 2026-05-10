@@ -2,19 +2,18 @@
 set -euo pipefail
 
 # ============================================================
-# Subset run for robustness
-# Runs NUM_POINTS dataset points.
+# Full run for robustness
 # ============================================================
 
-NUM_POINTS=10
+NUM_POINTS=185
 
-echo "[subset-rob] start $(date)"
-echo "[subset-rob] running $NUM_POINTS points"
+echo "[full-rob] start $(date)"
+echo "[full-rob] running $NUM_POINTS points"
 
 for ((i=0; i<NUM_POINTS; i++))
 do
-    echo "[subset-rob] ($((i+1))/$NUM_POINTS) index=$i"
-    python experiments/scripts/run_robustness.py --index "$i" --subset
+    echo "[full-rob] ($((i+1))/$NUM_POINTS) index=$i"
+    python experiments/scripts/run_robustness.py --index "$i" --full
 done
 
-echo "[subset-rob] done $(date)"
+echo "[full-rob] done $(date)"

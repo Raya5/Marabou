@@ -50,5 +50,4 @@ cmake-build-debug/
 .mypy_cache/
 
 
-# debug
-car.shtools/cadical/
+experiments/results/*

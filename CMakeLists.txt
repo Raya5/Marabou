@@ -158,7 +158,7 @@ if (${ENABLE_GUROBI})
   add_compile_definitions(ENABLE_GUROBI)
 
   set(GUROBI_LIB1 "gurobi_c++")
-  set(GUROBI_LIB2 "gurobi110")
+  set(GUROBI_LIB2 "gurobi120")
 
   add_library(${GUROBI_LIB1} SHARED IMPORTED)
   set_target_properties(${GUROBI_LIB1} PROPERTIES IMPORTED_LOCATION ${GUROBI_DIR}/lib/libgurobi_c++.a)
@@ -169,9 +169,9 @@ if (${ENABLE_GUROBI})
 
   # MACOSx uses .dylib instead of .so for its Gurobi downloads.
   if (APPLE)
-    set_target_properties(${GUROBI_LIB2} PROPERTIES IMPORTED_LOCATION ${GUROBI_DIR}/lib/libgurobi110.dylib)
+    set_target_properties(${GUROBI_LIB2} PROPERTIES IMPORTED_LOCATION ${GUROBI_DIR}/lib/libgurobi120.dylib)
   else()
-    set_target_properties(${GUROBI_LIB2} PROPERTIES IMPORTED_LOCATION ${GUROBI_DIR}/lib/libgurobi110.so)
+    set_target_properties(${GUROBI_LIB2} PROPERTIES IMPORTED_LOCATION ${GUROBI_DIR}/lib/libgurobi120.so)
   endif ()
 
   list(APPEND LIBS ${GUROBI_LIB2})
@@ -213,28 +213,30 @@ endif()
 ## CaDiCaL ##
 #############
 
+message(STATUS "Using CaDiCaL for incremental/conflict functionality")
 
 set(CADICAL_DEFAULT_DIR "${TOOLS_DIR}/cadical")
 if (NOT CADICAL_DIR)
-    set(CADICAL_DIR "${CADICAL_DEFAULT_DIR}")
+    set(CADICAL_DIR ${CADICAL_DEFAULT_DIR})
 endif()
 
-if (NOT EXISTS "${CADICAL_DIR}/build/libcadical.a" OR NOT EXISTS "${CADICAL_DIR}/src")
-if ("${CADICAL_DIR}" STREQUAL "${CADICAL_DEFAULT_DIR}")
-    execute_process(COMMAND ${TOOLS_DIR}/download_cadical.sh)
+if(NOT EXISTS "${CADICAL_DIR}/build/libcadical.a")
+message("Can't find CaDiCaL, installing. If CaDiCaL is installed please use the CADICAL_DIR parameter to pass the path")
+if (${CADICAL_DIR} STREQUAL ${CADICAL_DEFAULT_DIR})
+    message("Installing CaDiCaL")
+    execute_process(COMMAND ${TOOLS_DIR}/download_cadical.${SCRIPT_EXTENSION})
 else()
     message(FATAL_ERROR "Can't find CaDiCaL in the supplied directory")
 endif()
 endif()
 
-add_library(cadical STATIC IMPORTED)
-set_target_properties(cadical PROPERTIES
-    IMPORTED_LOCATION "${CADICAL_DIR}/build/libcadical.a"
-)
-target_include_directories(cadical INTERFACE "${CADICAL_DIR}/src")
+set(CADICAL_LIB cadical)
+add_library(${CADICAL_LIB} STATIC IMPORTED)
+set_target_properties(${CADICAL_LIB} PROPERTIES
+    IMPORTED_LOCATION "${CADICAL_DIR}/build/libcadical.a")
+target_include_directories(${CADICAL_LIB} INTERFACE "${CADICAL_DIR}/src")
 
-list(APPEND LIBS cadical)
-add_compile_definitions(ENABLE_INCREMENTAL)
+list(APPEND LIBS ${CADICAL_LIB})
 
 ###########
 ## Build ##

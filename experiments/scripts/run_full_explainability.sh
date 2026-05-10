@@ -2,20 +2,19 @@
 set -euo pipefail
 
 # ============================================================
-# Subset run for explainability
-# Runs a fixed subset of dataset points sequentially.
+# Full run for explainability
 # ============================================================
 
 NUM_POINTS=70
 
-echo "[subset-expl] start $(date)"
-echo "[subset-expl] running $NUM_POINTS points"
+echo "[full-expl] start $(date)"
+echo "[full-expl] running $NUM_POINTS points"
 
 for ((i=0; i<NUM_POINTS; i++))
 do
-    echo "[subset-expl] ($((i+1))/$NUM_POINTS) index=$i"
-    python experiments/scripts/run_explainability.py --index "$i" --subset
+    echo "[full-expl] ($((i+1))/$NUM_POINTS) index=$i"
+    python experiments/scripts/run_explainability.py --index "$i" --full
 done
 
 
-echo "[subset-expl] done $(date)"
+echo "[full-expl] done $(date)"
