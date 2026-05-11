@@ -17,13 +17,11 @@ paper-style tables.
 
 from summarize_explainability import main as summarize_explainability_main
 from summarize_robustness import main as summarize_robustness_main
-# from summarize_input_splitting import main as summarize_input_splitting_main  # TODO: implement input splitting summarization and tables
 
 
 def main():
     summarize_explainability_main()
     summarize_robustness_main()
-    # summarize_input_splitting_main()  # TODO: enable once implemented
 
 
 if __name__ == "__main__":

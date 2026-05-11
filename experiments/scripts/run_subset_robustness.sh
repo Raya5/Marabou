@@ -6,7 +6,7 @@ set -euo pipefail
 # Runs NUM_POINTS dataset points.
 # ============================================================
 
-NUM_POINTS=10
+NUM_POINTS=5
 
 echo "[subset-rob] start $(date)"
 echo "[subset-rob] running $NUM_POINTS points"

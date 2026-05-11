@@ -14,4 +14,5 @@ python experiments/scripts/run_experiment_inputsplit.py \
     --timeout 5 --timeout-factor 1.5 --max-depth 16 \
     --smoke 
 
+echo "[smoke-inp] success"
 echo "[smoke-inp] done $(date)"

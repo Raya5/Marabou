@@ -109,7 +109,8 @@ configure_build() {
 
 build_project() {
     log "build"
-    cmake --build . -j"$(detect_jobs)"
+    # cmake --build . -j"$(detect_jobs)"
+    cmake --build . --target MarabouCore -j1
 }
 
 smoke_test_python_import() {
