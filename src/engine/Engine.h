@@ -955,7 +955,10 @@ private:
     bool _incrementalMode;
     std::shared_ptr<IncrementalConflictAnalyser> _incrementalConflictAnalyser; // null if not incremental
     void recordConflictFromCurrentDecisions();
+    void recordConflictFromGurobiIIS();
     unsigned _originalNumVariables;
+    bool _recordNaiveConflictOnCatch;
+    static unsigned gurobiVariableNameToVariable( const String &name );
 
 
 };

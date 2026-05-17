@@ -369,6 +369,63 @@ bool GurobiWrapper::infeasible()
     return _model->get( GRB_IntAttr_Status ) == GRB_INFEASIBLE;
 }
 
+void GurobiWrapper::computeIIS()
+{
+    try
+    {
+        _model->computeIIS();
+    }
+    catch ( GRBException e )
+    {
+        throw CommonError( CommonError::GUROBI_EXCEPTION,
+                           Stringf( "Gurobi exception. Gurobi Code: %u, message: %s\n",
+                                    e.getErrorCode(),
+                                    e.getMessage().c_str() )
+                               .ascii() );
+    }
+}
+
+void GurobiWrapper::extractIISBounds( Map<String, GurobiWrapper::IISBoundType> &bounds )
+{
+    try
+    {
+        bounds.clear();
+
+        for ( const auto &variable : _nameToVariable )
+        {
+            const bool inLb = variable.second->get( GRB_IntAttr_IISLB );
+            const bool inUb = variable.second->get( GRB_IntAttr_IISUB );
+
+            if ( !inLb && !inUb )
+                continue;
+
+            const String &name = variable.first;
+
+            /*
+              For the first implementation, only Marabou variables x<i> are supported.
+              Auxiliary MILP variables such as a<i>, a<i>_<j>, or i<i> are not mapped
+              back to search-tree decision levels yet.
+            */
+            ASSERT( name.length() > 0 );
+
+            if ( inLb && inUb )
+                bounds[name] = IIS_BOTH;
+            else if ( inLb )
+                bounds[name] = IIS_LB;
+            else
+                bounds[name] = IIS_UB;
+        }
+    }
+    catch ( GRBException e )
+    {
+        throw CommonError( CommonError::GUROBI_EXCEPTION,
+                           Stringf( "Gurobi exception. Gurobi Code: %u, message: %s\n",
+                                    e.getErrorCode(),
+                                    e.getMessage().c_str() )
+                               .ascii() );
+    }
+}
+
 bool GurobiWrapper::timeout()
 {
     return _model->get( GRB_IntAttr_Status ) == GRB_TIME_LIMIT;

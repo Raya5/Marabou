@@ -77,6 +77,7 @@ Engine::Engine()
     , _incrementalMode( Options::get()->getBool( Options::INCREMENTAL_MODE ) )
     , _incrementalConflictAnalyser( NULL )
     , _originalNumVariables( 0 )
+    , _recordNaiveConflictOnCatch( true )
 {
     _searchTreeHandler.setStatistics( &_statistics );
     _tableau->setStatistics( &_statistics );
@@ -337,6 +338,7 @@ bool Engine::solve( double timeoutInSeconds )
             {
                 // Some variable bounds are invalid, so the query is unsat
                 throw InfeasibleQueryException();
+                {throw InfeasibleQueryException(); printf( "[Engine] This is line: %d\n", __LINE__ );}
             }
 
             if ( allVarsWithinBounds() )
@@ -438,6 +440,9 @@ bool Engine::solve( double timeoutInSeconds )
         }
         catch ( const InfeasibleQueryException & )
         {
+            // printf( _gurobi->infeasible() ? "[IIS] Yes, Gurobi reported infeasible\n"
+            //                           : "[IIS] No, Gurobi did not report infeasible\n" );
+
             _tableau->toggleOptimization( false );
             // The current query is unsat, and we need to pop.
             // If we're at level 0, the whole query is unsat.
@@ -446,7 +451,11 @@ bool Engine::solve( double timeoutInSeconds )
 
             if ( _incrementalMode )
             {
-                recordConflictFromCurrentDecisions();
+                if ( _recordNaiveConflictOnCatch )
+                {
+                    recordConflictFromCurrentDecisions();
+                }
+                _recordNaiveConflictOnCatch = true;
             }
             if ( !_searchTreeHandler.popSplit() )
             {
@@ -821,7 +830,7 @@ bool Engine::performSimplexStep()
                 return true;
             }
             else
-                throw InfeasibleQueryException();
+                {printf( "[Engine] This is line: %d\n", __LINE__ ); throw InfeasibleQueryException();}
         }
     }
 
@@ -993,7 +1002,12 @@ bool Engine::calculateBounds( const IQuery &inputQuery )
         if ( !_tableau->allBoundsValid() )
         {
             // Some variable bounds are invalid, so the query is unsat
-            throw InfeasibleQueryException();
+            if ( _incrementalMode ) {
+                ASSERT( Options::get()->getBool( Options::INCREMENTAL_MODE ) );
+                // recordConflictFromBoundInconsistency();
+                throw MarabouError( MarabouError::DEBUGGING_ERROR, "Engine::calculateBounds: bounds are inconsistent after calculation, implement." );
+            }
+            {printf( "[Engine] This is line: %d\n", __LINE__ ); throw InfeasibleQueryException();}
         }
     }
     catch ( const InfeasibleQueryException & )
@@ -1589,7 +1603,7 @@ bool Engine::processInputQuery( const IQuery &inputQuery, bool preprocess )
         if ( !_tableau->allBoundsValid() )
         {
             // Some variable bounds are invalid, so the query is unsat
-            throw InfeasibleQueryException();
+            {printf( "[Engine] This is line: %d\n", __LINE__ ); throw InfeasibleQueryException();}
         }
     }
     catch ( const InfeasibleQueryException & )
@@ -3369,7 +3383,14 @@ bool Engine::minimizeCostWithGurobi( const LinearExpression &costFunction )
                                   _gurobi->getNumberOfSimplexIterations() );
 
     if ( _gurobi->infeasible() )
+    {
+        if ( _incrementalMode )
+        {
+            recordConflictFromGurobiIIS();
+            _recordNaiveConflictOnCatch = false;
+        }
         throw InfeasibleQueryException();
+    }
     else if ( _gurobi->optimal() )
         return true;
     else
@@ -4143,7 +4164,7 @@ void Engine::recordConflictFromCurrentDecisions()
 
     List<PiecewiseLinearCaseSplit> decisions;
     _searchTreeHandler.allDecisionSplitsSoFar( decisions );
-    ASSERT( decisions.size() == depth );
+    ASSERT( decisions.size() == _searchTreeHandler.getStackDepth() );
 
     std::vector<unsigned> oldVars;
     std::vector<bool> isActiveList;
@@ -4182,7 +4203,13 @@ void Engine::recordConflictFromCurrentDecisions()
     ASSERT( oldVars.size() == isActiveList.size() );
     _incrementalConflictAnalyser->addConflict( oldVars, isActiveList );
 
-    // printf( "[Engine][IV] Stored conflict of size %zu: ", oldVars.size() );
+    unsigned size = oldVars.size();
+
+    printf( "[CONFLICT_STATS] query_id=%u source=naive_fallback naive=%u recorded=%u iis_bounds=0 iis_levels=0 depth=%u\n",
+            _incrementalConflictAnalyser->getCurrentQueryId(),
+            size,
+            size,
+            _searchTreeHandler.getStackDepth() );
     // for ( size_t i = 0; i < oldVars.size(); ++i )
     //     printf( " (%u,%s)", oldVars[i], isActiveList[i] ? "A" : "I" );
     // printf( "\n" );
@@ -4211,7 +4238,7 @@ void Engine::applyIncrementalConflictAnalyserTightenings()
 
     if ( !noConflict )
     {
-        throw InfeasibleQueryException();
+        {printf( "[Engine] This is line: %d\n", __LINE__ ); throw InfeasibleQueryException();}
     }
     if ( tightenings.size() > 0 )
     {
@@ -4238,7 +4265,7 @@ void Engine::applyIncrementalConflictAnalyserTightenings()
             const double newLb = tightening._value;
 
             // ICA should not emit weaker LB than current
-            ASSERT( !FloatUtils::lt( newLb, currentLb ) );
+            ASSERT( !FloatUtils::lt( newLb, _boundManager.getLowerBound( engineVar ) ) );
 
             // Optional safety (might legitimately fail -> UNSAT)
             // ASSERT( !FloatUtils::gt( newLb, currentUb ) );
@@ -4251,7 +4278,7 @@ void Engine::applyIncrementalConflictAnalyserTightenings()
             const double newUb = tightening._value;
 
             // ICA should not emit weaker UB than current
-            ASSERT( !FloatUtils::gt( newUb, currentUb ) );
+            ASSERT( !FloatUtils::gt( newUb, _boundManager.getUpperBound( engineVar ) ) );
 
             // Optional safety (might legitimately fail -> UNSAT)
             // ASSERT( !FloatUtils::lt( newUb, currentLb ) );
@@ -4267,5 +4294,139 @@ void Engine::applyIncrementalConflictAnalyserTightenings()
     _statistics.incUnsignedAttribute( Statistics::NUM_INCREMENTAL_TIGHTENINGS,
                                     tighteningsApplied );
     ASSERT( tighteningsApplied == tightenings.size() );
+
+}
+
+
+unsigned Engine::gurobiVariableNameToVariable( const String &name )
+{
+    ASSERT( name.length() > 1 );
+    ASSERT( name.ascii()[0] == 'x' );
+    return atoi( name.ascii() + 1 );
+}
+
+void Engine::recordConflictFromGurobiIIS()
+{
+    ASSERT( _incrementalMode );
+    ASSERT( _incrementalConflictAnalyser );
+    ASSERT( _gurobi );
+    ASSERT( _gurobi->infeasible() );
+
+    _gurobi->computeIIS();
+
+    Map<String, GurobiWrapper::IISBoundType> iisBounds;
+    _gurobi->extractIISBounds( iisBounds );
+
+    Set<unsigned> relevantLevels;
+
+    for ( const auto &pair : iisBounds )
+    {
+        const String &name = pair.first;
+        const auto type = pair.second;
+
+        List<unsigned> variables;
+
+        if ( name.ascii()[0] == 'x' )
+        {
+            variables.append( gurobiVariableNameToVariable( name ) );
+        }
+        else
+        {
+            bool found = _milpEncoder->getSourceVariablesForAuxiliaryVariable( name, variables );
+            ASSERT( found );
+
+            if ( !found )
+            {
+                printf( "[Engine][IIS] Aux variable %s has no source-variable mapping\n",
+                        name.ascii() );
+                throw MarabouError( MarabouError::DEBUGGING_ERROR, "Aux variable has no source-variable mapping" );
+                // continue;
+            }
+        }
+
+        for ( const auto &variable : variables )
+        {
+            if ( type == GurobiWrapper::IIS_LB || type == GurobiWrapper::IIS_BOTH ||
+                name.ascii()[0] != 'x' )
+            {
+                List<unsigned> levels = _boundManager.getLowerBoundUpdateLevels( variable );
+                for ( const auto &level : levels )
+                {
+                    if ( level > 0 )
+                        relevantLevels.insert( level );
+                }
+            }
+
+            if ( type == GurobiWrapper::IIS_UB || type == GurobiWrapper::IIS_BOTH ||
+                name.ascii()[0] != 'x' )
+            {
+                List<unsigned> levels = _boundManager.getUpperBoundUpdateLevels( variable );
+                for ( const auto &level : levels )
+                {
+                    if ( level > 0 )
+                        relevantLevels.insert( level );
+                }
+            }
+        }
+    }
+
+    List<PiecewiseLinearCaseSplit> decisions;
+    _searchTreeHandler.allDecisionSplitsSoFar( decisions );
+
+    std::vector<unsigned> oldVars;
+    std::vector<bool> isActiveList;
+
+    if ( ! relevantLevels.empty() )
+    {
+        unsigned level = 1;
+        for ( const auto &split : decisions )
+        {
+            if ( relevantLevels.exists( level ) )
+            {
+                ASSERT( split.getBoundTightenings().size() == 2 );
+                ASSERT( split.getEquations().empty() );
+
+                const auto &bts = split.getBoundTightenings();
+                auto it = bts.begin();
+                const Tightening &t0 = *it++;
+                const Tightening &t1 = *it++;
+
+                ASSERT( FloatUtils::areEqual( t0._value, 0.0 ) );
+                ASSERT( FloatUtils::areEqual( t1._value, 0.0 ) );
+
+                const unsigned reluVar = std::min( t0._variable, t1._variable );
+
+                bool isActive;
+                if ( t0._type == Tightening::UB && t1._type == Tightening::UB )
+                    isActive = false;
+                else if ( ( t0._type == Tightening::LB && t1._type == Tightening::UB ) ||
+                        ( t0._type == Tightening::UB && t1._type == Tightening::LB ) )
+                    isActive = true;
+                else
+                    ASSERT( false && "Unexpected decision split pattern" );
+
+                const unsigned oldVar = _preprocessor.getOldIndex( reluVar );
+                oldVars.push_back( oldVar );
+                isActiveList.push_back( isActive );
+            }
+
+            ++level;
+        }
+    }
+
+    ASSERT( oldVars.size() == isActiveList.size() );
+
+    _incrementalConflictAnalyser->addConflict( oldVars, isActiveList );
+
+    unsigned naiveSize = _searchTreeHandler.getStackDepth();
+    unsigned recordedSize = oldVars.size();
+
+    printf( "[CONFLICT_STATS] query_id=%u source=gurobi_iis naive=%u recorded=%u iis_bounds=%u iis_levels=%u depth=%u\n",
+            _incrementalConflictAnalyser->getCurrentQueryId(),
+            naiveSize,
+            recordedSize,
+            iisBounds.size(),
+            relevantLevels.size(),
+            naiveSize );
 
 }

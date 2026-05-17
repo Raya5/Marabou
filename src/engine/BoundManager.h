@@ -97,6 +97,13 @@ public:
     double getUpperBound( unsigned variable ) const;
 
     /*
+       Return the context-dependent decision levels that updated the current bounds.
+       These are used for Gurobi IIS-based conflict extraction.
+     */
+    List<unsigned> getLowerBoundUpdateLevels( unsigned variable ) const;
+    List<unsigned> getUpperBoundUpdateLevels( unsigned variable ) const;
+
+    /*
       Get pointers to latest bounds used for access by tableau and tighteners
      */
     const double *getLowerBounds() const;
@@ -238,6 +245,13 @@ private:
     Vector<CVC4::context::CDO<bool> *> _tightenedUpper;
 
     /*
+       Context-dependent lists of decision levels that updated each variable bound.
+       These are a first approximation for IIS-based conflict dependencies.
+     */
+    Vector<CVC4::context::CDO<List<unsigned>> *> _lowerBoundUpdateLevels;
+    Vector<CVC4::context::CDO<List<unsigned>> *> _upperBoundUpdateLevels;
+
+    /*
        Record first tightening that violates bounds
      */
     void recordInconsistentBound( unsigned variable, double value, Tightening::BoundType type );
@@ -253,6 +267,11 @@ private:
     bool tightenLowerBound( unsigned variable, double value, const SparseUnsortedList &row );
     bool tightenUpperBound( unsigned variable, double value, const SparseUnsortedList &row );
 
+    /*
+       Record that the current context level contributed to a bound update.
+     */
+    void recordBoundUpdateLevel( unsigned variable, Tightening::BoundType type );
+    
     /*
       Adds a lemma to the UNSATCertificateNode object
      */

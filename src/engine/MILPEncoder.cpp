@@ -32,6 +32,7 @@ void MILPEncoder::encodeQuery( GurobiWrapper &gurobi, const Query &inputQuery, b
     struct timespec start = TimeUtils::sampleMicro();
 
     gurobi.reset();
+    _auxiliaryVariableToSourceVariables.clear();
     // Add variables
     for ( unsigned var = 0; var < inputQuery.getNumberOfVariables(); var++ )
     {
@@ -123,6 +124,24 @@ String MILPEncoder::getVariableNameFromVariable( unsigned variable )
     return _variableToVariableName[variable];
 }
 
+bool MILPEncoder::getSourceVariablesForAuxiliaryVariable(
+    const String &auxVariable,
+    List<unsigned> &sourceVariables ) const
+{
+    if ( !_auxiliaryVariableToSourceVariables.exists( auxVariable ) )
+        return false;
+
+    sourceVariables = _auxiliaryVariableToSourceVariables[auxVariable];
+    return true;
+}
+
+void MILPEncoder::recordAuxiliaryVariableSources( const String &auxVariable,
+                                                  const List<unsigned> &sourceVariables )
+{
+    ASSERT( !_auxiliaryVariableToSourceVariables.exists( auxVariable ) );
+    _auxiliaryVariableToSourceVariables[auxVariable] = sourceVariables;
+}
+
 void MILPEncoder::encodeEquation( GurobiWrapper &gurobi, const Equation &equation )
 {
     List<GurobiWrapper::Term> terms;
@@ -166,26 +185,35 @@ void MILPEncoder::encodeReLUConstraint( GurobiWrapper &gurobi, ReluConstraint *r
       When a = 0, the constriants become:
           f - b <= - lb_b, f <= 0
     */
-    gurobi.addVariable( Stringf( "a%u", _binVarIndex ),
+    String auxName = Stringf( "a%u", _binVarIndex );
+    gurobi.addVariable( auxName,
                         0,
                         1,
                         relax ? GurobiWrapper::CONTINUOUS : GurobiWrapper::BINARY );
 
     unsigned sourceVariable = relu->getB();
     unsigned targetVariable = relu->getF();
+
+    List<unsigned> sourceVariables;
+    sourceVariables.append( sourceVariable );
+    sourceVariables.append( targetVariable );
+    recordAuxiliaryVariableSources( auxName, sourceVariables );
+
     double sourceLb = _tableau.getLowerBound( sourceVariable );
     double targetUb = _tableau.getUpperBound( targetVariable );
 
     List<GurobiWrapper::Term> terms;
     terms.append( GurobiWrapper::Term( 1, Stringf( "x%u", targetVariable ) ) );
     terms.append( GurobiWrapper::Term( -1, Stringf( "x%u", sourceVariable ) ) );
-    terms.append( GurobiWrapper::Term( -sourceLb, Stringf( "a%u", _binVarIndex ) ) );
+    terms.append( GurobiWrapper::Term( -sourceLb, auxName ) );
     gurobi.addLeqConstraint( terms, -sourceLb );
 
     terms.clear();
     terms.append( GurobiWrapper::Term( 1, Stringf( "x%u", targetVariable ) ) );
-    terms.append( GurobiWrapper::Term( -targetUb, Stringf( "a%u", _binVarIndex++ ) ) );
+    terms.append( GurobiWrapper::Term( -targetUb, auxName ) );
     gurobi.addLeqConstraint( terms, 0 );
+
+    _binVarIndex++;
 }
 
 void MILPEncoder::encodeLeakyReLUConstraint( GurobiWrapper &gurobi,
@@ -261,12 +289,13 @@ void MILPEncoder::encodeMaxConstraint( GurobiWrapper &gurobi, MaxConstraint *max
     for ( unsigned i = 0; i < phases.size(); ++i )
     {
         // add a binary variable for each disjunct
-        gurobi.addVariable( Stringf( "a%u_%u", _binVarIndex, i ),
+        String auxName = Stringf( "a%u_%u", _binVarIndex, i );
+        gurobi.addVariable( auxName,
                             0,
                             1,
                             relax ? GurobiWrapper::CONTINUOUS : GurobiWrapper::BINARY );
 
-        terms.append( GurobiWrapper::Term( 1, Stringf( "a%u_%u", _binVarIndex, i ) ) );
+        terms.append( GurobiWrapper::Term( 1, auxName ) );
     }
 
     // add constraint: a_1 + a_2 + ... + = 1
@@ -278,6 +307,13 @@ void MILPEncoder::encodeMaxConstraint( GurobiWrapper &gurobi, MaxConstraint *max
     {
         String binVarName = Stringf( "a%u_%u", _binVarIndex, index );
         PiecewiseLinearCaseSplit split = max->getCaseSplit( phase );
+        
+        List<unsigned> sourceVariables;
+        for ( const auto &tightening : split.getBoundTightenings() )
+            sourceVariables.append( tightening._variable );
+
+        recordAuxiliaryVariableSources( binVarName, sourceVariables );
+
         if ( phase == MAX_PHASE_ELIMINATED )
         {
             /*
@@ -348,7 +384,8 @@ void MILPEncoder::encodeAbsoluteValueConstraint( GurobiWrapper &gurobi,
       When a = 0, the constriants become:
       f - b <= ub_f - lb_b, f + b <= 0
     */
-    gurobi.addVariable( Stringf( "a%u", _binVarIndex ),
+    String auxName = Stringf( "a%u", _binVarIndex );
+    gurobi.addVariable( auxName,
                         0,
                         1,
                         relax ? GurobiWrapper::CONTINUOUS : GurobiWrapper::BINARY );
@@ -356,15 +393,20 @@ void MILPEncoder::encodeAbsoluteValueConstraint( GurobiWrapper &gurobi,
     List<GurobiWrapper::Term> terms;
     terms.append( GurobiWrapper::Term( 1, Stringf( "x%u", targetVariable ) ) );
     terms.append( GurobiWrapper::Term( -1, Stringf( "x%u", sourceVariable ) ) );
-    terms.append( GurobiWrapper::Term( targetUb - sourceLb, Stringf( "a%u", _binVarIndex ) ) );
+    terms.append( GurobiWrapper::Term( targetUb - sourceLb, auxName ) );
     gurobi.addLeqConstraint( terms, targetUb - sourceLb );
 
     terms.clear();
     terms.append( GurobiWrapper::Term( 1, Stringf( "x%u", targetVariable ) ) );
     terms.append( GurobiWrapper::Term( 1, Stringf( "x%u", sourceVariable ) ) );
-    terms.append( GurobiWrapper::Term( -( targetUb + sourceUb ), Stringf( "a%u", _binVarIndex ) ) );
+    terms.append( GurobiWrapper::Term( -( targetUb + sourceUb ), auxName ) );
     gurobi.addLeqConstraint( terms, 0 );
     ++_binVarIndex;
+
+    List<unsigned> sourceVariables;
+    sourceVariables.append( sourceVariable );
+    sourceVariables.append( targetVariable );
+    recordAuxiliaryVariableSources( auxName, sourceVariables );
 }
 
 void MILPEncoder::encodeDisjunctionConstraint( GurobiWrapper &gurobi,
@@ -380,12 +422,13 @@ void MILPEncoder::encodeDisjunctionConstraint( GurobiWrapper &gurobi,
     for ( unsigned i = 0; i < disjuncts.size(); ++i )
     {
         // add a binary variable for each disjunct
-        gurobi.addVariable( Stringf( "a%u_%u", _binVarIndex, i ),
+        String auxName = Stringf( "a%u_%u", _binVarIndex, i );
+        gurobi.addVariable( auxName,
                             0,
                             1,
                             relax ? GurobiWrapper::CONTINUOUS : GurobiWrapper::BINARY );
 
-        terms.append( GurobiWrapper::Term( 1, Stringf( "a%u_%u", _binVarIndex, i ) ) );
+        terms.append( GurobiWrapper::Term( 1, auxName ) );
     }
 
     // add constraint: a_1 + a_2 + ... + >= 1
@@ -397,6 +440,13 @@ void MILPEncoder::encodeDisjunctionConstraint( GurobiWrapper &gurobi,
     for ( const auto &disjunct : disjuncts )
     {
         String binVarName = Stringf( "a%u_%u", _binVarIndex, index );
+
+        List<unsigned> sourceVariables;
+        for ( const auto &tightening : disjunct.getBoundTightenings() )
+            sourceVariables.append( tightening._variable );
+
+        recordAuxiliaryVariableSources( binVarName, sourceVariables );
+
         for ( const auto &tightening : disjunct.getBoundTightenings() )
         {
             // add indicator constraint: a_1 => disjunct1, etc.
@@ -427,10 +477,10 @@ void MILPEncoder::encodeSignConstraint( GurobiWrapper &gurobi, SignConstraint *s
         return;
     }
 
+    unsigned sourceVariable = sign->getB();
     unsigned targetVariable = sign->getF();
-    DEBUG( {
-        unsigned sourceVariable = sign->getB();
 
+    DEBUG( {
         double sourceLb = _tableau.getLowerBound( sourceVariable );
         double sourceUb = _tableau.getUpperBound( sourceVariable );
         ASSERT( !FloatUtils::isNegative( sourceUb ) && FloatUtils::isNegative( sourceLb ) );
@@ -444,14 +494,21 @@ void MILPEncoder::encodeSignConstraint( GurobiWrapper &gurobi, SignConstraint *s
       Moreover, when f is 1, 1 <= -2 / lb_b * b + 1, thus, b >= 0.
       When f is -1, -1 >= 2/ub_b * b - 1, thus, b <= 0.
     */
-    gurobi.addVariable( Stringf( "a%u", _binVarIndex ),
+    String auxName = Stringf( "a%u", _binVarIndex );
+    gurobi.addVariable( auxName,
                         0,
                         1,
                         relax ? GurobiWrapper::CONTINUOUS : GurobiWrapper::BINARY );
 
+    // Record origin: aux depends on b and f
+    List<unsigned> sourceVariables;
+    sourceVariables.append( sourceVariable );
+    sourceVariables.append( targetVariable );
+    recordAuxiliaryVariableSources( auxName, sourceVariables );
+
     List<GurobiWrapper::Term> terms;
     terms.append( GurobiWrapper::Term( 1, Stringf( "x%u", targetVariable ) ) );
-    terms.append( GurobiWrapper::Term( -2, Stringf( "a%u", _binVarIndex ) ) );
+    terms.append( GurobiWrapper::Term( -2, auxName ) );
     gurobi.addEqConstraint( terms, -1 );
 
     ++_binVarIndex;
@@ -478,6 +535,10 @@ void MILPEncoder::encodeSigmoidConstraint( GurobiWrapper &gurobi, SigmoidConstra
         // Constraint where x_b >= 0
         // Upper line is tangent and lower line is secant for an overapproximation with a
         // linearization.
+        List<unsigned> sourceVariablesForAux;
+        sourceVariablesForAux.append( sourceVariable );
+        sourceVariablesForAux.append( targetVariable );
+        recordAuxiliaryVariableSources( binVarName, sourceVariablesForAux );
 
         int binVal = 1;
 
@@ -745,10 +806,16 @@ void MILPEncoder::encodeRoundConstraint( GurobiWrapper &gurobi, RoundConstraint 
                             _tableau.getLowerBound( targetVariable ),
                             _tableau.getUpperBound( targetVariable ),
                             GurobiWrapper::INTEGER );
+
+        List<unsigned> sourceVariablesForAux;
+        sourceVariablesForAux.append( targetVariable );
+        recordAuxiliaryVariableSources( varName, sourceVariablesForAux );
+
         List<GurobiWrapper::Term> terms;
         terms.append( GurobiWrapper::Term( 1, Stringf( "x%u", targetVariable ) ) );
-        terms.append( GurobiWrapper::Term( -1, Stringf( "i%u", _intVarIndex ) ) );
+        terms.append( GurobiWrapper::Term( -1, varName ) );
         gurobi.addEqConstraint( terms, 0 );
+
         ++_intVarIndex;
     }
 }

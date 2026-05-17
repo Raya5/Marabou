@@ -46,6 +46,7 @@ Statistics::Statistics()
     _unsignedAttributes[NUM_LEMMAS_USED] = 0;
     _unsignedAttributes[CERTIFIED_UNSAT] = 0;
     _unsignedAttributes[NUM_INCREMENTAL_TIGHTENINGS] = 0;
+    _unsignedAttributes[NUM_CONFLICTS] = 0;
 
     _longAttributes[NUM_MAIN_LOOP_ITERATIONS] = 0;
     _longAttributes[NUM_SIMPLEX_STEPS] = 0;
@@ -331,6 +332,9 @@ void Statistics::print()
 
     printf( "\t\tIncremental tightenings (DependencyAnalyzer): %u\n",
             getUnsignedAttribute( Statistics::NUM_INCREMENTAL_TIGHTENINGS ) );
+
+    printf( "\t\tNumber of conflicts with size >= 2: %u\n",
+            getUnsignedAttribute( Statistics::NUM_CONFLICTS ) );
 
     printf( "\t\tNumber of rows examined by row tightener: %llu. Consequent tightenings: %llu\n",
             getLongAttribute( Statistics::NUM_ROWS_EXAMINED_BY_ROW_TIGHTENER ),

@@ -60,6 +60,8 @@ BoundManager::~BoundManager()
         _storedUpperBounds[i]->deleteSelf();
         _tightenedLower[i]->deleteSelf();
         _tightenedUpper[i]->deleteSelf();
+        _lowerBoundUpdateLevels[i]->deleteSelf();
+        _upperBoundUpdateLevels[i]->deleteSelf();
     }
 
     if ( _boundExplainer )
@@ -108,6 +110,8 @@ unsigned BoundManager::registerNewVariable()
     ASSERT( _size == _storedUpperBounds.size() );
     ASSERT( _size == _tightenedLower.size() );
     ASSERT( _size == _tightenedUpper.size() );
+    ASSERT( _size == _lowerBoundUpdateLevels.size() );
+    ASSERT( _size == _upperBoundUpdateLevels.size() );
 
     unsigned newVar = _size++;
 
@@ -129,11 +133,15 @@ unsigned BoundManager::registerNewVariable()
     _storedUpperBounds.append( new ( true ) CDO<double>( &_context ) );
     _tightenedLower.append( new ( true ) CDO<bool>( &_context ) );
     _tightenedUpper.append( new ( true ) CDO<bool>( &_context ) );
+    _lowerBoundUpdateLevels.append( new ( true ) CDO<List<unsigned>>( &_context ) );
+    _upperBoundUpdateLevels.append( new ( true ) CDO<List<unsigned>>( &_context ) );
 
     *_storedLowerBounds[newVar] = FloatUtils::negativeInfinity();
     *_storedUpperBounds[newVar] = FloatUtils::infinity();
     *_tightenedLower[newVar] = false;
     *_tightenedUpper[newVar] = false;
+    *_lowerBoundUpdateLevels[newVar] = List<unsigned>();
+    *_upperBoundUpdateLevels[newVar] = List<unsigned>();
 
     return newVar;
 }
@@ -184,6 +192,7 @@ bool BoundManager::setLowerBound( unsigned variable, double value )
     {
         _lowerBounds[variable] = value;
         *_tightenedLower[variable] = true;
+        recordBoundUpdateLevel( variable, Tightening::LB );
 
         if ( !consistentBounds( variable ) )
             recordInconsistentBound( variable, value, Tightening::LB );
@@ -203,6 +212,7 @@ bool BoundManager::setUpperBound( unsigned variable, double value )
     {
         _upperBounds[variable] = value;
         *_tightenedUpper[variable] = true;
+        recordBoundUpdateLevel( variable, Tightening::UB );
 
         if ( !consistentBounds( variable ) )
             recordInconsistentBound( variable, value, Tightening::UB );
@@ -222,6 +232,18 @@ double BoundManager::getUpperBound( unsigned variable ) const
 {
     ASSERT( variable < _size );
     return _upperBounds[variable];
+}
+
+List<unsigned> BoundManager::getLowerBoundUpdateLevels( unsigned variable ) const
+{
+    ASSERT( variable < _size );
+    return *_lowerBoundUpdateLevels[variable];
+}
+
+List<unsigned> BoundManager::getUpperBoundUpdateLevels( unsigned variable ) const
+{
+    ASSERT( variable < _size );
+    return *_upperBoundUpdateLevels[variable];
 }
 
 const double *BoundManager::getLowerBounds() const
@@ -389,6 +411,24 @@ bool BoundManager::tightenUpperBound( unsigned variable,
     }
 
     return tightened;
+}
+
+void BoundManager::recordBoundUpdateLevel( unsigned variable, Tightening::BoundType type )
+{
+    ASSERT( variable < _size );
+
+    CDO<List<unsigned>> *levels =
+        type == Tightening::LB ? _lowerBoundUpdateLevels[variable]
+                               : _upperBoundUpdateLevels[variable];
+
+    List<unsigned> updatedLevels = *levels;
+    unsigned currentLevel = _context.getLevel();
+    
+    //If List does not have .back(), use: *updatedLevels.rbegin()
+    if ( updatedLevels.empty() || updatedLevels.back() != currentLevel )
+        updatedLevels.append( currentLevel );
+
+    *levels = updatedLevels;
 }
 
 void BoundManager::resetExplanation( const unsigned var, const bool isUpper ) const

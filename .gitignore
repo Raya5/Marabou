@@ -51,4 +51,6 @@ cmake-build-debug/
 
 
 # debug
-car.shtools/cadical/
+car.sh
+tools/cadical/
+experiments/results/*

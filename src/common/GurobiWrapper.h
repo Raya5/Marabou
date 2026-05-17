@@ -31,6 +31,12 @@ public:
         INTEGER = 2,
     };
 
+    enum IISBoundType {
+        IIS_LB = 0,
+        IIS_UB = 1,
+        IIS_BOTH = 2,
+    };
+
     /*
       A term has the form: coefficient * variable
     */
@@ -132,6 +138,12 @@ public:
 
     // Returns true iff the instance is infeasible
     bool infeasible();
+
+    // Compute an IIS for an infeasible model
+    void computeIIS();
+
+    // Extract variable bounds that appear in the IIS
+    void extractIISBounds( Map<String, IISBoundType> &bounds );
 
     // Returns true iff the instance timed out
     bool timeout();
@@ -250,6 +262,12 @@ public:
         INTEGER = 2,
     };
 
+    enum IISBoundType {
+        IIS_LB = 0,
+        IIS_UB = 1,
+        IIS_BOTH = 2,
+    };
+
     struct Term
     {
         Term( double, String )
@@ -340,6 +358,8 @@ public:
     {
         return false;
     };
+    void computeIIS(){};
+    void extractIISBounds( Map<String, IISBoundType> & ){};
     bool timeout()
     {
         return false;

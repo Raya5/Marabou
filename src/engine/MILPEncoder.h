@@ -44,6 +44,13 @@ public:
       get variable name from a variable in the encoded inputquery
     */
     String getVariableNameFromVariable( unsigned variable );
+    
+    /*
+      Return true iff auxVariable is a Gurobi auxiliary variable created by this encoder.
+      If true, sourceVariables contains the Marabou variables related to this auxiliary.
+    */
+    bool getSourceVariablesForAuxiliaryVariable( const String &auxVariable,
+                                                 List<unsigned> &sourceVariables ) const;
 
     inline void setStatistics( Statistics *statistics )
     {
@@ -70,6 +77,12 @@ private:
       Map the variable to the string encoded in Gurobi
     */
     Map<unsigned, String> _variableToVariableName;
+
+    /*
+      Map each Gurobi auxiliary variable to the Marabou variables that created it.
+      Used when an auxiliary variable appears in a Gurobi IIS.
+    */
+    Map<String, List<unsigned>> _auxiliaryVariableToSourceVariables;
 
     /*
       Index for Gurobi binary variables
@@ -156,6 +169,9 @@ private:
       Encode a Round constraint
     */
     void encodeRoundConstraint( GurobiWrapper &gurobi, RoundConstraint *round, bool relax );
+
+    void recordAuxiliaryVariableSources( const String &auxVariable,
+                                      const List<unsigned> &sourceVariables );
 };
 
 #endif // __MILPEncoder_h__
