@@ -158,9 +158,11 @@ if (${ENABLE_GUROBI})
   add_compile_definitions(ENABLE_GUROBI)
 
   set(GUROBI_LIB1 "gurobi_c++")
-  set(GUROBI_LIB2 "gurobi110")
+  set(GUROBI_LIB2 "gurobi120")
 
-  add_library(${GUROBI_LIB1} SHARED IMPORTED)
+  # add_library(${GUROBI_LIB1} SHARED IMPORTED)
+  add_library(${GUROBI_LIB1} STATIC IMPORTED)
+  # set_target_properties(${GUROBI_LIB1} PROPERTIES IMPORTED_LOCATION ${GUROBI_DIR}/lib/libgurobi_c++.a)
   set_target_properties(${GUROBI_LIB1} PROPERTIES IMPORTED_LOCATION ${GUROBI_DIR}/lib/libgurobi_c++.a)
   list(APPEND LIBS ${GUROBI_LIB1})
   target_include_directories(${GUROBI_LIB1} INTERFACE ${GUROBI_DIR}/include/)
@@ -169,9 +171,9 @@ if (${ENABLE_GUROBI})
 
   # MACOSx uses .dylib instead of .so for its Gurobi downloads.
   if (APPLE)
-    set_target_properties(${GUROBI_LIB2} PROPERTIES IMPORTED_LOCATION ${GUROBI_DIR}/lib/libgurobi110.dylib)
+    set_target_properties(${GUROBI_LIB2} PROPERTIES IMPORTED_LOCATION ${GUROBI_DIR}/lib/libgurobi120.dylib)
   else()
-    set_target_properties(${GUROBI_LIB2} PROPERTIES IMPORTED_LOCATION ${GUROBI_DIR}/lib/libgurobi110.so)
+    set_target_properties(${GUROBI_LIB2} PROPERTIES IMPORTED_LOCATION ${GUROBI_DIR}/lib/libgurobi120.so)
   endif ()
 
   list(APPEND LIBS ${GUROBI_LIB2})
@@ -208,6 +210,35 @@ if (NOT MSVC AND ${ENABLE_OPENBLAS})
   list(APPEND LIBS ${OPENBLAS_LIB})
   target_include_directories(${OPENBLAS_LIB} INTERFACE ${OPENBLAS_DIR}/installed/include)
 endif()
+
+#############
+## CaDiCaL ##
+#############
+
+message(STATUS "Using CaDiCaL for incremental/conflict functionality")
+
+set(CADICAL_DEFAULT_DIR "${TOOLS_DIR}/cadical")
+if (NOT CADICAL_DIR)
+    set(CADICAL_DIR ${CADICAL_DEFAULT_DIR})
+endif()
+
+if(NOT EXISTS "${CADICAL_DIR}/build/libcadical.a")
+message("Can't find CaDiCaL, installing. If CaDiCaL is installed please use the CADICAL_DIR parameter to pass the path")
+if (${CADICAL_DIR} STREQUAL ${CADICAL_DEFAULT_DIR})
+    message("Installing CaDiCaL")
+    execute_process(COMMAND ${TOOLS_DIR}/download_cadical.${SCRIPT_EXTENSION})
+else()
+    message(FATAL_ERROR "Can't find CaDiCaL in the supplied directory")
+endif()
+endif()
+
+set(CADICAL_LIB cadical)
+add_library(${CADICAL_LIB} STATIC IMPORTED)
+set_target_properties(${CADICAL_LIB} PROPERTIES
+    IMPORTED_LOCATION "${CADICAL_DIR}/build/libcadical.a")
+target_include_directories(${CADICAL_LIB} INTERFACE "${CADICAL_DIR}/src")
+
+list(APPEND LIBS ${CADICAL_LIB})
 
 ###########
 ## Build ##
@@ -390,7 +421,8 @@ if (${BUILD_PYTHON})
     set(MARABOU_PY MarabouCore)
     pybind11_add_module(${MARABOU_PY} ${PYTHON_API_DIR}/MarabouCore.cpp)
 
-    target_link_libraries(${MARABOU_PY} PRIVATE ${MARABOU_LIB})
+    # target_link_libraries(${MARABOU_PY} PRIVATE ${MARABOU_LIB})
+    target_link_libraries(${MARABOU_PY} PRIVATE ${MARABOU_LIB} ${LIBS})
     target_include_directories(${MARABOU_PY} PRIVATE ${LIBS_INCLUDES})
 
     set_target_properties(${MARABOU_PY} PROPERTIES

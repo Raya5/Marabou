@@ -418,14 +418,10 @@ void SearchTreeHandler::allSplitsSoFar( List<PiecewiseLinearCaseSplit> &result )
 void SearchTreeHandler::allDecisionSplitsSoFar( List<PiecewiseLinearCaseSplit> &result ) const
 {
     result.clear();
-
-    const unsigned depth = getStackDepth();
-    ASSERT( depth == _stack.size() );
+    ASSERT( getStackDepth() == _stack.size() );
 
     for ( const auto &it : _stack )
         result.append( it->_activeSplit );
-
-    ASSERT( result.size() == depth );
 }
 
 

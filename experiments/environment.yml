@@ -1,0 +1,14 @@
+name: incremental-marabou-experiments
+channels:
+  - conda-forge
+  - pytorch
+dependencies:
+  - python=3.11
+  - numpy
+  - matplotlib
+  - onnx
+  - onnxruntime
+  - pytorch
+  - cpuonly
+  - scikit-learn
+  - pip
