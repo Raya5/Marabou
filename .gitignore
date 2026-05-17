@@ -52,5 +52,9 @@ cmake-build-debug/
 
 # debug
 car.sh
-tools/cadical/
 experiments/results/*
+
+experiments/data/benchmarks/ipq_files/*
+experiments/data/mnist_openml_test.npz
+experiments/README_tmp.md
+installation.sh

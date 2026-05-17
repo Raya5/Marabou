@@ -33,7 +33,9 @@ GurobiWrapper::GurobiWrapper()
     , _model( NULL )
     , _timeoutInSeconds( Options::get()->getFloat( Options::MILP_SOLVER_TIMEOUT ) )
 {
-    _environment = new GRBEnv;
+    _environment = new GRBEnv(true);       
+    _environment->set(GRB_IntParam_OutputFlag, 0);
+    _environment->start();
     resetModel();
 }
 

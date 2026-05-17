@@ -108,7 +108,6 @@ def get_point_by_db_index(db_idx: int) -> Tuple[np.ndarray, int]:
 
     return point_flat, true_label
 
-
 # ---------------------------------------------------------------------
 # ORT helper
 # ---------------------------------------------------------------------

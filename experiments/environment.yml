@@ -10,6 +10,5 @@ dependencies:
   - onnxruntime
   - pytorch
   - cpuonly
+  - scikit-learn
   - pip
-  # - pip:
-  - tqdm

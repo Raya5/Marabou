@@ -418,7 +418,6 @@ void SearchTreeHandler::allSplitsSoFar( List<PiecewiseLinearCaseSplit> &result )
 void SearchTreeHandler::allDecisionSplitsSoFar( List<PiecewiseLinearCaseSplit> &result ) const
 {
     result.clear();
-
     ASSERT( getStackDepth() == _stack.size() );
 
     for ( const auto &it : _stack )

@@ -1009,7 +1009,6 @@ void Preprocessor::eliminateVariables()
     }
 
     // Adjust the number of variables in the query
-    printf("[Debug][Preprocessor] numEliminated: %d\n", numEliminated);
     _preprocessed->setNumberOfVariables( _preprocessed->getNumberOfVariables() - numEliminated );
 
     // Adjust the input/output mappings in the query
