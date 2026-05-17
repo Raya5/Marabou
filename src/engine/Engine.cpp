@@ -4174,28 +4174,84 @@ void Engine::recordConflictFromCurrentDecisions()
 
     for ( const auto &split : decisions )
     {
-        ASSERT( split.getBoundTightenings().size() == 2 );
-        ASSERT( split.getEquations().empty() );
-
         const auto &bts = split.getBoundTightenings();
-        auto it = bts.begin();
-        const Tightening &t0 = *it++;
-        const Tightening &t1 = *it++;
 
-        ASSERT( FloatUtils::areEqual( t0._value, 0.0 ) );
-        ASSERT( FloatUtils::areEqual( t1._value, 0.0 ) );
+        unsigned reluVar = 0;
+        bool isActive = false;
 
-        const unsigned reluVar = std::min( t0._variable, t1._variable );
+        /*
+        ReLU decision splits can appear in two forms.
 
-        bool isActive;
-        if ( t0._type == Tightening::UB && t1._type == Tightening::UB )
-            isActive = false; // Inactive
-        else if ( ( t0._type == Tightening::LB && t1._type == Tightening::UB ) ||
-                  ( t0._type == Tightening::UB && t1._type == Tightening::LB ) )
-            isActive = true;  // Active
+        Inactive phase:
+            b <= 0, f <= 0
+            usually represented by two UB tightenings.
+
+        Active phase:
+            b >= 0, b - f = 0
+            when no auxiliary variable is used, this may be represented by
+            one LB tightening together with an equation.
+
+        For conflict recording we only need the ReLU phase literal, so we
+        record:
+            LB at 0  -> active
+            UB/UB at 0 -> inactive
+        */
+
+        if ( bts.size() == 1 )
+        {
+            const Tightening &t = *bts.begin();
+
+            ASSERT( FloatUtils::areEqual( t._value, 0.0 ) );
+
+            if ( t._type == Tightening::LB )
+            {
+                reluVar = t._variable;
+                isActive = true;
+            }
+            else if ( t._type == Tightening::UB )
+            {
+                reluVar = t._variable;
+                isActive = false;
+            }
+            else
+            {
+                throw MarabouError( MarabouError::DEBUGGING_ERROR,
+                                    "Unsupported one-tightening decision split" );
+            }
+        }
+        else if ( bts.size() == 2 )
+        {
+            ASSERT( split.getEquations().empty() );
+
+            auto it = bts.begin();
+            const Tightening &t0 = *it++;
+            const Tightening &t1 = *it++;
+
+            ASSERT( FloatUtils::areEqual( t0._value, 0.0 ) );
+            ASSERT( FloatUtils::areEqual( t1._value, 0.0 ) );
+
+            reluVar = std::min( t0._variable, t1._variable );
+
+            if ( t0._type == Tightening::UB && t1._type == Tightening::UB )
+            {
+                isActive = false; // Inactive
+            }
+            else if ( ( t0._type == Tightening::LB && t1._type == Tightening::UB ) ||
+                    ( t0._type == Tightening::UB && t1._type == Tightening::LB ) )
+            {
+                isActive = true; // Active
+            }
+            else
+            {
+                throw MarabouError( MarabouError::DEBUGGING_ERROR,
+                                    "Decision split does not correspond to ReLU activation" );
+            }
+        }
         else
+        {
             throw MarabouError( MarabouError::DEBUGGING_ERROR,
-                                "Decision split does not correspond to ReLU activation" );
+                                "Unsupported decision split size for conflict recording" );
+        }
 
         const unsigned oldVar = _preprocessor.getOldIndex( reluVar );
         oldVars.push_back( oldVar );
